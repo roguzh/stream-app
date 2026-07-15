@@ -61,6 +61,33 @@
     margin-top: 12px;
   }
 
+  .field-label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  #audioSourceSelect {
+    width: 100%;
+    min-height: 44px;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    padding: 8px 10px;
+    background: #fff;
+    color: #1a1a1a;
+    box-sizing: border-box;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    #audioSourceSelect {
+      background: #2a2a2e;
+      color: #eee;
+      border-color: #444;
+    }
+  }
+
   #startBtn {
     background: #2d7ef7;
     color: #fff;
@@ -143,6 +170,15 @@
   <h1>Stream to TV</h1>
 
   <div class="card">
+    <label for="audioSourceSelect" class="field-label">System audio source</label>
+    <select id="audioSourceSelect">
+      <option value="">No extra audio (screen/tab audio only)</option>
+    </select>
+    <div class="note">
+      Sharing the entire screen or a window doesn't include app audio on Mac —
+      pick a virtual audio device (e.g. BlackHole) here to send system audio too.
+      Sharing a Chrome tab captures that tab's audio natively; leave this on "No extra audio".
+    </div>
     <button id="startBtn">Start Streaming</button>
     <button id="stopBtn" style="display:none">Stop</button>
     <div id="status">Not connected</div>
@@ -174,12 +210,57 @@
     const statsEl = document.getElementById('stats');
     const iosNote = document.getElementById('ios-note');
     const receiverUrlEl = document.getElementById('receiver-url');
+    const audioSourceSelect = document.getElementById('audioSourceSelect');
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
     if (isIOS) {
       iosNote.style.display = 'block';
+      audioSourceSelect.closest('.card').querySelector('#audioSourceSelect').style.display = 'none';
+      audioSourceSelect.closest('.card').querySelector('.field-label').style.display = 'none';
+    }
+
+    // Virtual audio devices (BlackHole, Loopback, Soundflower) show up as regular
+    // audioinput devices — this is how system-wide audio gets into the stream on Mac,
+    // since getDisplayMedia only captures app audio when sharing a Chrome tab.
+    async function populateAudioDevices() {
+      if (isIOS) return;
+      try {
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        let audioInputs = devices.filter(d => d.kind === 'audioinput');
+
+        if (audioInputs.length && audioInputs.every(d => !d.label)) {
+          try {
+            const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
+            temp.getTracks().forEach(t => t.stop());
+            devices = await navigator.mediaDevices.enumerateDevices();
+            audioInputs = devices.filter(d => d.kind === 'audioinput');
+          } catch (e) {
+            // Permission denied — device labels stay blank, list still usable by index.
+          }
+        }
+
+        const previousValue = audioSourceSelect.value;
+        audioSourceSelect.innerHTML = '<option value="">No extra audio (screen/tab audio only)</option>';
+        audioInputs.forEach((d, i) => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `Audio input ${i + 1}`;
+          if (/blackhole|loopback|soundflower/i.test(d.label)) opt.selected = true;
+          audioSourceSelect.appendChild(opt);
+        });
+        if ([...audioSourceSelect.options].some(o => o.value === previousValue)) {
+          audioSourceSelect.value = previousValue;
+        }
+      } catch (e) {
+        console.warn('Could not list audio devices:', e);
+      }
+    }
+
+    populateAudioDevices();
+    if (navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', populateAudioDevices);
     }
 
     const receiverUrl = `${window.location.protocol}//${window.location.host}/receiver`;
@@ -346,6 +427,27 @@
           setStatus(`Error: ${e.message}`, 'error');
         }
         return;
+      }
+
+      // Full-screen/window sharing on Mac never includes app audio (only a shared
+      // Chrome tab does) — pull it from a selected virtual audio device instead.
+      if (stream.getAudioTracks().length === 0 && audioSourceSelect.value) {
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: { exact: audioSourceSelect.value },
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              sampleRate: 48000,
+              channelCount: 2
+            }
+          });
+          audioStream.getAudioTracks().forEach(t => stream.addTrack(t));
+        } catch (e) {
+          console.warn('Could not capture selected audio device:', e);
+          setStatus('Audio device unavailable — streaming video only', 'error');
+        }
       }
 
       setStatus('Connecting…');

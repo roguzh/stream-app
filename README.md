@@ -60,6 +60,30 @@ Open /receiver on Mi Box
 
 Stop streaming from the sender's **Stop** button, or by using the browser's native "Stop sharing" control — either way the receiver detects the drop and shows a reconnect screen.
 
+### Streaming system audio (Mac)
+
+Chrome on macOS only offers a "share audio" checkbox when you share a **Chrome tab** — sharing the entire screen or a window never includes app audio (a QuickTime video, Spotify, a native app, another browser) due to a macOS/Chrome platform limitation, not anything this app controls.
+
+If you're sharing a Chrome tab, you're done — check "Share tab audio" in the picker and it flows through automatically.
+
+If you're sharing the entire screen or a window and want that audio too, you need a virtual audio driver to route system output back in as a capturable input:
+
+1. **Install [BlackHole](https://github.com/ExistentialAudio/BlackHole)** (free, open source):
+   ```bash
+   brew install blackhole-2ch
+   ```
+   macOS will ask you to approve the new audio driver in **System Settings → Privacy & Security** — you'll need to do that step yourself and may be prompted to restart the Core Audio service or log out/in.
+
+2. **Create a Multi-Output Device** so you still hear audio locally instead of it going silently into BlackHole:
+   - Open **Audio MIDI Setup** (Spotlight → "Audio MIDI Setup")
+   - Click **+** → **Create Multi-Output Device**
+   - Check both your normal speakers/headphones **and** "BlackHole 2ch"
+   - Set this Multi-Output Device as your Mac's audio output (**System Settings → Sound**, or the menu bar volume icon)
+
+3. On the sender page, the **System audio source** dropdown will list "BlackHole 2ch" once the browser has microphone permission (Chrome will prompt on first use). Select it before clicking **Start Streaming**.
+
+The sender page auto-detects a device with "blackhole" in its name and pre-selects it. This also works with similar tools (Loopback, Soundflower) — anything that appears as an audio input device.
+
 ### Configuration
 
 The only runtime setting is the port:
@@ -120,7 +144,8 @@ stream-app/
 - **No authentication.** Anyone on the LAN can open `/sender` or `/receiver`. Fine for a home network, not something to expose beyond that.
 - **Single sender, single receiver.** The signaling relay uses one hardcoded room (`"stream"`); a second sender or receiver joining will conflict with an existing session rather than creating a separate one.
 - **No HTTPS.** `getDisplayMedia()` works over plain HTTP for `localhost` and LAN IPs in Chrome, so this is intentional — don't try to expose this server outside your LAN.
-- **iPhone Safari can only share a browser tab**, not the full device screen, and doesn't capture system audio. Chrome on Mac supports full-screen and window capture with audio.
+- **iPhone Safari can only share a browser tab**, not the full device screen, and doesn't capture system audio at all — no workaround exists on iOS.
+- **Chrome on Mac only captures audio natively when sharing a tab.** Full-screen and window capture never include app audio (macOS/Chrome platform limitation) — see [Streaming system audio (Mac)](#streaming-system-audio-mac) for the BlackHole-based workaround.
 - **IP autodetection** picks the first real (non-bridge, non-VPN) IPv4 interface it finds. If your Mac has multiple active network interfaces, double check the printed `Network:` URL is actually reachable from your TV before assuming it's wrong.
 
 ## Troubleshooting
