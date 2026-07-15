@@ -13,9 +13,9 @@ Point any browser's screen-share at another browser's `<video>` tag, in H.264, a
 ## Features
 
 - Peer-to-peer WebRTC video — server only relays signaling, never touches media
-- H.264 preferred via SDP munging for hardware encode/decode on both ends
-- Bitrate and framerate enforcement (targets 6–8 Mbps, 1080p, 60fps)
-- Fullscreen receiver UI with a live stats overlay (resolution, fps, bitrate, connection state)
+- H.264 forced via `setCodecPreferences()` (highest available profile) with SDP munging as fallback
+- Tuned for sustained 60fps under motion: `contentHint`, `degradationPreference`, and a 20 Mbps bitrate ceiling — see [Quality tuning](#quality-tuning)
+- Fullscreen receiver UI with a live stats overlay (resolution, fps, dropped frames, bitrate, codec, connection state)
 - QR code on the sender page for quick access to the receiver URL
 - Auto-reconnect on the receiver if the sender drops
 - Works from iPhone Safari (tab-share) as well as Mac Chrome (full screen)
@@ -83,10 +83,25 @@ Defaults to `3000` if unset.
 ```
 
 - `server.js` is a thin Express + Socket.io relay. It serves the two static pages and forwards SDP offers/answers and ICE candidates between whoever is in the `"stream"` room. It never sees the video itself.
-- `public/sender.html` captures the screen with `getDisplayMedia()`, rewrites its own SDP offer to move H.264 payload types to the front of the codec list, and applies `RTCRtpSender.setParameters()` to push for a real bitrate (WebRTC defaults to ~1 Mbps/30fps otherwise).
+- `public/sender.html` captures the screen with `getDisplayMedia()`, forces H.264 (highest available profile) via `setCodecPreferences()` with SDP munging as a fallback, and applies `RTCRtpSender.setParameters()` to push bitrate up to a 20 Mbps ceiling (WebRTC defaults to ~1 Mbps/30fps otherwise).
 - `public/receiver.html` waits for an offer, answers it, and renders the incoming track fullscreen with a toggleable stats overlay.
 
 Since there's no STUN/TURN server, both peers connect with an empty ICE server list — this only works when sender and receiver are reachable from each other directly, i.e. same LAN.
+
+### Quality tuning
+
+Getting a consistent 60fps out of WebRTC screen-share takes more than just requesting it — several defaults work against you, especially with high-motion content like video/movie playback:
+
+- **`contentHint = 'motion'`** on the captured track. Browsers default to biasing the encoder toward spatial sharpness (good for reading static UI text, bad for moving video) — this flips that priority toward temporal smoothness.
+- **`degradationPreference: 'maintain-framerate'`** on the sender's encoding params. If the encoder ever has to shed load, it drops resolution before framerate, instead of the default "balanced" behavior which can do either.
+- **20 Mbps bitrate ceiling.** LAN has bandwidth to spare, so the encoder is never starved of bits for complex/high-entropy content (movies have far more motion and detail than a static desktop).
+- **H.264 profile preference.** `setCodecPreferences()` sorts available H.264 profiles High > Main > Baseline before falling back to other codecs — higher profiles compress more efficiently at the same bitrate.
+- **Quality params applied immediately** after the offer is created rather than waiting for `connectionState === 'connected'`, cutting out several seconds of default-bitrate ramp-up on every stream start.
+- **Receiver-side jitter buffer** (`playoutDelayHint`) is nudged up slightly to absorb network jitter without dropping frames, trading a small amount of latency that doesn't matter for screen mirroring.
+
+Both stats overlays now surface the diagnostics that matter for chasing quality issues:
+- **Sender**: codec in use, and `qualityLimitationReason` (`cpu`, `bandwidth`, or `none`) — tells you definitively whether the Mac's encoder is the bottleneck.
+- **Receiver**: dropped frames per second — if this climbs during movie playback, the TV's decoder (not the network or the sender) can't keep up, which is common on lower-power Android TV boxes doing software decode of complex content.
 
 ## Project structure
 

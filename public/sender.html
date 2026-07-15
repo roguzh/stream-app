@@ -151,6 +151,8 @@
       <span id="stat-fps">–</span>
       <span id="stat-bitrate">–</span>
       <span id="stat-latency">–</span>
+      <span id="stat-codec">–</span>
+      <span id="stat-dropped">–</span>
     </div>
     <div class="note" id="ios-note" style="display:none">On iPhone, only tab sharing is available. No audio capture.</div>
   </div>
@@ -256,6 +258,37 @@
       }).join('\r\n');
     }
 
+    // H.264 profile ranking: High > Main > Baseline, decoded from profile-level-id's first byte.
+    function h264ProfileRank(codec) {
+      const match = (codec.sdpFmtpLine || '').match(/profile-level-id=([0-9a-fA-F]{6})/);
+      if (!match) return 99;
+      const profile = match[1].substring(0, 2).toLowerCase();
+      const ranking = { '64': 0, '4d': 1, '42': 2 };
+      return ranking[profile] ?? 50;
+    }
+
+    // Explicitly order codec preferences on the transceiver so the browser negotiates
+    // H.264 (highest profile available) instead of leaving codec choice to chance.
+    // preferH264() below still munges the SDP as a fallback for browsers without
+    // setCodecPreferences support.
+    function setH264CodecPreference(pc) {
+      if (typeof RTCRtpTransceiver === 'undefined' || !RTCRtpTransceiver.prototype.setCodecPreferences) return;
+      const transceiver = pc.getTransceivers().find(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+      if (!transceiver) return;
+      const capabilities = RTCRtpSender.getCapabilities('video');
+      if (!capabilities) return;
+      const h264 = capabilities.codecs
+        .filter(c => c.mimeType.toLowerCase() === 'video/h264')
+        .sort((a, b) => h264ProfileRank(a) - h264ProfileRank(b));
+      const rest = capabilities.codecs.filter(c => c.mimeType.toLowerCase() !== 'video/h264');
+      if (h264.length === 0) return;
+      try {
+        transceiver.setCodecPreferences([...h264, ...rest]);
+      } catch (e) {
+        console.warn('setCodecPreferences failed:', e);
+      }
+    }
+
     async function applyHighQualityParams(pc) {
       const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
       if (!videoSender) return;
@@ -263,10 +296,16 @@
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
-      params.encodings[0].maxBitrate = 8_000_000;
+      // LAN has bandwidth to spare — a generous ceiling means the encoder never has
+      // to starve complex/high-motion content (movies, games) of bits.
+      params.encodings[0].maxBitrate = 20_000_000;
       params.encodings[0].maxFramerate = 60;
+      params.encodings[0].scaleResolutionDownBy = 1;
       params.encodings[0].networkPriority = 'high';
       params.encodings[0].priority = 'high';
+      // When the encoder does have to shed load, drop resolution before framerate —
+      // the whole point of this app is smooth motion, not maximum sharpness.
+      params.degradationPreference = 'maintain-framerate';
       try {
         await videoSender.setParameters(params);
         console.log('High quality params applied');
@@ -317,6 +356,11 @@
 
       stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
+      // 'motion' tells the encoder to protect temporal smoothness (framerate) over
+      // spatial sharpness — the opposite of the default, which favors sharp static
+      // frames and is why fast content like video playback looked choppy/blurry before.
+      stream.getVideoTracks()[0].contentHint = 'motion';
+
       stream.getVideoTracks()[0].onended = () => stopStreaming();
 
       pc.onicecandidate = (event) => {
@@ -336,10 +380,16 @@
         }
       };
 
+      setH264CodecPreference(pc);
+
       const offer = await pc.createOffer();
       offer.sdp = preferH264(offer.sdp);
       await pc.setLocalDescription(offer);
       socket.emit('offer', offer);
+
+      // Apply quality params as soon as the encoder exists rather than waiting for
+      // 'connected' — avoids several seconds of default-bitrate ramp-up on every start.
+      applyHighQualityParams(pc);
 
       const { width, height } = stream.getVideoTracks()[0].getSettings();
       document.getElementById('stat-res').textContent = `${width}×${height}`;
@@ -368,17 +418,30 @@
     async function pollStats() {
       if (!pc) return;
       const stats = await pc.getStats();
-      let bytesSent = 0, framesPerSecond = 0;
+      let bytesSent = 0, framesPerSecond = 0, codecId = null, qualityLimitation = '', rtt = null;
       stats.forEach(report => {
         if (report.type === 'outbound-rtp' && report.kind === 'video') {
           bytesSent = report.bytesSent;
           framesPerSecond = report.framesPerSecond || 0;
+          codecId = report.codecId;
+          qualityLimitation = report.qualityLimitationReason || '';
+        }
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime != null) {
+          rtt = report.currentRoundTripTime;
         }
       });
+
       const bitrateMbps = ((bytesSent - prevBytesSent) * 8 / 1_000_000).toFixed(1);
       prevBytesSent = bytesSent;
       document.getElementById('stat-bitrate').textContent = `${bitrateMbps} Mbps`;
       document.getElementById('stat-fps').textContent = `${Math.round(framesPerSecond)} fps`;
+      document.getElementById('stat-latency').textContent = rtt != null ? `${Math.round(rtt * 1000)} ms` : '–';
+
+      const codecReport = codecId ? stats.get(codecId) : null;
+      document.getElementById('stat-codec').textContent = codecReport ? codecReport.mimeType.replace('video/', '') : '–';
+      // "cpu" or "bandwidth" here means the encoder is actively degrading quality —
+      // the single most useful signal for diagnosing why motion looks bad.
+      document.getElementById('stat-dropped').textContent = qualityLimitation ? `limit: ${qualityLimitation}` : 'limit: none';
     }
 
     startBtn.addEventListener('click', startStreaming);

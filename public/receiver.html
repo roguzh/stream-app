@@ -133,6 +133,7 @@
     let hideTimeout = null;
     let prevFrames = 0;
     let prevFrameTime = 0;
+    let prevDropped = 0;
     let reconnecting = false;
 
     function createPeerConnection() {
@@ -143,6 +144,12 @@
         setStatus('connected');
         attemptFullscreen();
         scheduleHideStatus();
+
+        // A small extra playout buffer absorbs network jitter without dropping frames —
+        // trades ~100ms of latency (irrelevant for screen mirroring) for smoother motion.
+        if ('playoutDelayHint' in event.receiver) {
+          event.receiver.playoutDelayHint = 0.1;
+        }
       };
 
       pc.onicecandidate = (event) => {
@@ -252,6 +259,7 @@
     function startStatsPolling() {
       clearInterval(statsInterval);
       prevFrames = 0;
+      prevDropped = 0;
       prevFrameTime = performance.now();
       statsInterval = setInterval(updateStats, 1000);
     }
@@ -263,13 +271,16 @@
       const height = video.videoHeight || 0;
 
       let fps = 0;
+      let droppedDelta = 0;
       if (video.getVideoPlaybackQuality) {
         const quality = video.getVideoPlaybackQuality();
         const now = performance.now();
         const frameDelta = quality.totalVideoFrames - prevFrames;
         const timeDelta = (now - prevFrameTime) / 1000;
         fps = timeDelta > 0 ? Math.round(frameDelta / timeDelta) : 0;
+        droppedDelta = quality.droppedVideoFrames - prevDropped;
         prevFrames = quality.totalVideoFrames;
+        prevDropped = quality.droppedVideoFrames;
         prevFrameTime = now;
       }
 
@@ -278,12 +289,25 @@
         bufferHealth = (video.buffered.end(video.buffered.length - 1) - video.currentTime).toFixed(2);
       }
 
+      // Dropped frames here mean the device's decoder can't keep up with the incoming
+      // stream — a strong signal that this TV, not the sender or network, is the bottleneck.
+      let codecName = '–';
+      const rtcStats = await pc.getStats();
+      rtcStats.forEach(report => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video' && report.codecId) {
+          const codecReport = rtcStats.get(report.codecId);
+          if (codecReport) codecName = codecReport.mimeType.replace('video/', '');
+        }
+      });
+
       const connectionState = pc.connectionState;
 
       statsEl.textContent =
         `${width}x${height}\n` +
         `${fps} fps\n` +
+        `dropped ${droppedDelta}/s\n` +
         `buffer ${bufferHealth}s\n` +
+        `${codecName}\n` +
         `${connectionState}`;
     }
 
