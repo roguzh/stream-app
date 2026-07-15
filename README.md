@@ -157,6 +157,7 @@ stream-app/
 | Low bitrate / blurry video | Wi-Fi congestion — try wired Ethernet on the sender, or move closer to the AP |
 | No H.264 in codec list | Browser/OS doesn't support it in this context; the app falls back to whatever codec is offered (VP8/VP9) |
 | Stream drops repeatedly | Check Wi-Fi signal strength on both ends; the receiver auto-reloads 3s after a dropped connection |
+| Video works but no sound, even with tab/system audio set up correctly | Browser autoplay policy blocks unmuted `autoplay` — the receiver starts muted so video always plays automatically, then tries to unmute itself. If the browser blocks that too, a "🔇 Tap for sound" button appears bottom-left; click it (or press OK on the TV remote) to unmute |
 
 ## Contributing
 

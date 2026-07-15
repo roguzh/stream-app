@@ -81,6 +81,28 @@
     z-index: 20;
   }
 
+  #sound-btn {
+    position: fixed;
+    left: 5%;
+    bottom: 5%;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    border: 2px solid rgba(255,255,255,0.4);
+    font-size: 1rem;
+    padding: 12px 20px;
+    border-radius: 999px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 15;
+  }
+
+  #sound-btn:focus {
+    outline: 3px solid #4caf50;
+    outline-offset: 2px;
+  }
+
   #stats {
     position: fixed;
     top: 5%;
@@ -112,6 +134,7 @@
   </div>
   <video id="video" autoplay playsinline muted></video>
   <button id="fullscreen-btn">Tap to go fullscreen</button>
+  <button id="sound-btn">🔇 Tap for sound</button>
   <div id="stats"></div>
 
   <script src="/socket.io/socket.io.js"></script>
@@ -123,6 +146,7 @@
     const statusText = document.getElementById('status-text');
     const statusUrl = document.getElementById('status-url');
     const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const soundBtn = document.getElementById('sound-btn');
     const statsEl = document.getElementById('stats');
 
     statusUrl.textContent = window.location.protocol + '//' + window.location.host;
@@ -143,6 +167,7 @@
         video.srcObject = event.streams[0];
         setStatus('connected');
         attemptFullscreen();
+        attemptUnmutedPlayback();
         scheduleHideStatus();
 
         // A small extra playout buffer absorbs network jitter without dropping frames —
@@ -206,7 +231,34 @@
     fullscreenBtn.addEventListener('click', () => {
       document.documentElement.requestFullscreen().catch(() => {});
       fullscreenBtn.style.display = 'none';
+      // Any click is a user gesture — piggyback the unmute attempt on it too.
+      unmute();
     });
+
+    // The <video> starts muted so autoplay is never blocked (the browser policy that
+    // blocks unmuted autoplay is why tab/system audio can look "silently dropped" —
+    // it isn't dropped, it's just muted at the sink). Try unmuted playback once a
+    // stream arrives; if the browser blocks it, fall back to muted + a visible button
+    // so a real user gesture (touch or D-pad OK) can unmute it.
+    async function attemptUnmutedPlayback() {
+      video.muted = false;
+      try {
+        await video.play();
+        soundBtn.style.display = 'none';
+      } catch (e) {
+        video.muted = true;
+        video.play().catch(() => {});
+        soundBtn.style.display = 'flex';
+      }
+    }
+
+    function unmute() {
+      video.muted = false;
+      video.play().catch(() => {});
+      soundBtn.style.display = 'none';
+    }
+
+    soundBtn.addEventListener('click', unmute);
 
     function handleDisconnect() {
       if (reconnecting) return;
