@@ -176,13 +176,30 @@ stream-app/
 ├── server.js               # Express + Socket.io signaling server
 ├── public/
 │   ├── sender.html          # Opened on Mac or iPhone
-│   └── receiver.html        # Opened on the TV browser (or use the native app below)
-└── android-receiver/        # Native Android TV client — see android-receiver/README.md
+│   ├── receiver.html        # Opened on the TV browser (or use a native app below);
+│   │                        # also supports serverless pairing mode — see below
+│   └── auth.js              # Shared password-prompt helper
+├── android-receiver/        # Native Android TV client — see android-receiver/README.md
+└── ios-sender/               # Native iOS "phone hosts itself" sender — see ios-sender/README.md
 ```
 
 ## Native Android TV receiver
 
 Instead of opening `receiver.html` in whatever browser the Mi Box has, there's a native Android TV app in [`android-receiver/`](android-receiver/) that talks to the same signaling server unchanged. It gets hardware-accelerated decode, real fullscreen without a tap-to-fullscreen step, and audio that just plays without the browser autoplay-mute workaround. It's a separate Kotlin/Android Studio project — see [android-receiver/README.md](android-receiver/README.md) for building and sideloading it onto the Mi Box.
+
+## Native iOS sender (serverless — the phone hosts itself)
+
+Every sender/receiver above connects through `server.js`, which has to run persistently on some machine. [`ios-sender/`](ios-sender/) is a different model: a native iOS app that captures the whole device screen and **hosts itself directly** — no central server at all, not even a persistent one on the phone (mobile OS background restrictions make long-lived embedded servers fragile). It does a brief one-shot local-network handoff instead:
+
+1. The app shows a QR code (and the same info as plain text, for camera-less pairing).
+2. A receiver — right now, `receiver.html`'s **Pair with sender** button — scans or enters it, fetches the offer directly from the phone (`GET /offer`), and posts back an answer (`POST /answer`).
+3. WebRTC media then flows directly phone-to-receiver, same as every other connection in this project.
+
+This uses **non-trickle ICE**: both sides wait for full local candidate gathering before exchanging SDP, so the whole handshake collapses to one request/response pair instead of needing an ongoing signaling channel. It's fully additive — `server.js` and the existing Socket.io-relay flow are completely untouched; pairing mode is a second, independent way to connect that happens to live in the same `receiver.html` file.
+
+**This is genuinely unverified code** — it requires Xcode/a physical iPhone/an Apple ID to build and test, none of which were available while writing it. The wire protocol (the fetch/POST exchange above) *is* verified, tested against a mock server standing in for the phone. Everything inside the Xcode project itself is not. See [ios-sender/README.md](ios-sender/README.md) for the full picture, including which specific files are the highest-risk (`CustomAudioDeviceModule.swift` especially) and where to start debugging if the first build doesn't work.
+
+Android-as-sender (the same self-hosting model, for Android phones) is a planned follow-up, not built yet.
 
 ## Known limitations
 
@@ -190,7 +207,7 @@ Instead of opening `receiver.html` in whatever browser the Mi Box has, there's a
 - **No authentication by default.** Anyone on the LAN can join the stream unless you set `STREAM_PASSWORD` — see [Password protection](#password-protection). Even with a password, the static pages themselves still load for anyone (harmless, since the source is public anyway); only joining the actual WebRTC session is gated.
 - **Single sender, single receiver.** The signaling relay uses one hardcoded room (`"stream"`). A second sender or receiver joining now gets a clear rejection message instead of silently cross-talking with the existing session, but there's still no support for genuinely running more than one of each at a time.
 - **No HTTPS.** `getDisplayMedia()` works over plain HTTP for `localhost` and LAN IPs in Chrome, so this is intentional — don't try to expose this server outside your LAN.
-- **iPhone Safari can only share a browser tab**, not the full device screen, and doesn't capture system audio at all — no workaround exists on iOS.
+- **iPhone Safari can only share a browser tab**, not the full device screen, and doesn't capture system audio at all — no workaround exists for the browser path. The native [ios-sender/](ios-sender/) app captures the full screen instead, but is unverified — see its README.
 - **Chrome on Mac only captures audio natively when sharing a tab.** Full-screen and window capture never include app audio (macOS/Chrome platform limitation) — see [Streaming system audio (Mac)](#streaming-system-audio-mac) for the BlackHole-based workaround.
 - **IP autodetection** picks the first real (non-bridge, non-VPN) IPv4 interface it finds. If your Mac has multiple active network interfaces, double check the printed `Network:` URL is actually reachable from your TV before assuming it's wrong.
 
@@ -204,6 +221,7 @@ Instead of opening `receiver.html` in whatever browser the Mi Box has, there's a
 | No H.264 in codec list | Browser/OS doesn't support it in this context; the app falls back to whatever codec is offered (VP8/VP9) |
 | Stream drops repeatedly | Check Wi-Fi signal strength on both ends; the receiver auto-reloads 3s after a dropped connection |
 | Video works but no sound, even with tab/system audio set up correctly | Browser autoplay policy blocks unmuted `autoplay` — the receiver starts muted so video always plays automatically, then tries to unmute itself. If the browser blocks that too, a "🔇 Tap for sound" button appears bottom-left; click it (or press OK on the TV remote) to unmute |
+| "Pair with sender" fails with a connection error | The pairing URL is wrong/stale (each broadcast session gets a fresh one — rescan/re-enter it), the two devices aren't on the same LAN, or the iOS app's listener isn't actually running (unverified code — check Xcode's console output on the phone) |
 
 ## Contributing
 

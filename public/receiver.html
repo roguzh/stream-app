@@ -124,6 +124,110 @@
   #stats.visible {
     opacity: 1;
   }
+
+  #pair-btn {
+    position: fixed;
+    top: 5%;
+    left: 5%;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    border: 2px solid rgba(255,255,255,0.4);
+    font-size: 0.9rem;
+    padding: 10px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    z-index: 8;
+  }
+
+  #pair-btn:focus {
+    outline: 3px solid #4caf50;
+    outline-offset: 2px;
+  }
+
+  #pair-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 5%;
+    box-sizing: border-box;
+    color: #eee;
+    font-family: -apple-system, system-ui, sans-serif;
+    text-align: center;
+  }
+
+  #pair-overlay.visible {
+    display: flex;
+  }
+
+  #pair-overlay h2 {
+    font-size: 1.2rem;
+    margin: 0 0 12px;
+  }
+
+  #pair-video {
+    width: min(320px, 80vw);
+    height: min(320px, 80vw);
+    background: #111;
+    border-radius: 8px;
+    object-fit: cover;
+    display: none;
+  }
+
+  #pair-video.visible {
+    display: block;
+  }
+
+  #pair-scan-btn {
+    margin-top: 12px;
+  }
+
+  #pair-manual {
+    margin-top: 20px;
+    width: min(420px, 90vw);
+  }
+
+  #pair-input {
+    width: 100%;
+    min-height: 44px;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: 1px solid #555;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    background: #1e1e22;
+    color: #eee;
+  }
+
+  #pair-error {
+    color: #ff6b6b;
+    font-size: 0.85rem;
+    margin-top: 8px;
+    min-height: 1.2em;
+  }
+
+  #pair-overlay button {
+    min-height: 44px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    background: #2d7ef7;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+
+  #pair-close-btn {
+    background: transparent !important;
+    color: #999 !important;
+    font-weight: 400 !important;
+  }
 </style>
 </head>
 <body>
@@ -135,7 +239,23 @@
   <video id="video" autoplay playsinline muted></video>
   <button id="fullscreen-btn">Tap to go fullscreen</button>
   <button id="sound-btn">🔇 Tap for sound</button>
+  <button id="pair-btn">Pair with sender</button>
   <div id="stats"></div>
+
+  <!-- Serverless pairing mode: connect directly to a phone hosting itself (e.g. the
+       iOS sender), instead of going through server.js's Socket.io relay. See
+       ios-sender/ and the "Automatic quality fallback"-style docs in README.md. -->
+  <div id="pair-overlay">
+    <h2>Pair with a sender</h2>
+    <video id="pair-video" muted playsinline></video>
+    <button id="pair-scan-btn" style="display:none">Scan QR code</button>
+    <div id="pair-manual">
+      <input type="text" id="pair-input" placeholder="http://192.168.1.x:PORT/offer?sid=..." />
+      <div id="pair-error"></div>
+      <button id="pair-connect-btn">Connect</button>
+    </div>
+    <button id="pair-close-btn">Cancel</button>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/auth.js"></script>
@@ -149,6 +269,14 @@
     const fullscreenBtn = document.getElementById('fullscreen-btn');
     const soundBtn = document.getElementById('sound-btn');
     const statsEl = document.getElementById('stats');
+    const pairBtn = document.getElementById('pair-btn');
+    const pairOverlay = document.getElementById('pair-overlay');
+    const pairVideo = document.getElementById('pair-video');
+    const pairScanBtn = document.getElementById('pair-scan-btn');
+    const pairInput = document.getElementById('pair-input');
+    const pairError = document.getElementById('pair-error');
+    const pairConnectBtn = document.getElementById('pair-connect-btn');
+    const pairCloseBtn = document.getElementById('pair-close-btn');
 
     statusUrl.textContent = window.location.protocol + '//' + window.location.host;
 
@@ -373,6 +501,153 @@
       // Feeds the sender's auto quality fallback — dropped frames climbing here means
       // this device's decoder can't keep up, which the sender has no way to see on its own.
       socket.emit('receiver-quality', { droppedPerSec: droppedDelta });
+    }
+
+    // --- Serverless pairing mode ---------------------------------------------------
+    // Connect directly to a self-hosted sender (e.g. ios-sender/) via a one-shot
+    // GET-offer/POST-answer exchange, bypassing server.js's Socket.io relay
+    // entirely for this connection's signaling. Fully additive — reuses
+    // createPeerConnection()/setStatus()/startStatsPolling() unchanged; the only
+    // new thing is *how* the offer/answer get exchanged.
+
+    let pairScanning = false;
+    let pairStream = null;
+    let barcodeDetector = null;
+
+    function openPairOverlay() {
+      pairOverlay.classList.add('visible');
+      pairError.textContent = '';
+      pairInput.focus();
+      if ('BarcodeDetector' in window) {
+        pairScanBtn.style.display = 'inline-block';
+      }
+    }
+
+    function closePairOverlay() {
+      pairOverlay.classList.remove('visible');
+      stopScanning();
+    }
+
+    pairBtn.addEventListener('click', openPairOverlay);
+    pairCloseBtn.addEventListener('click', closePairOverlay);
+
+    async function startScanning() {
+      if (pairScanning) return;
+      try {
+        barcodeDetector = barcodeDetector || new BarcodeDetector({ formats: ['qr_code'] });
+        pairStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        pairVideo.srcObject = pairStream;
+        pairVideo.classList.add('visible');
+        await pairVideo.play();
+        pairScanning = true;
+        pairScanBtn.textContent = 'Stop scanning';
+        scanLoop();
+      } catch (e) {
+        pairError.textContent = 'Camera unavailable — enter the pairing URL manually below.';
+      }
+    }
+
+    function stopScanning() {
+      pairScanning = false;
+      pairScanBtn.textContent = 'Scan QR code';
+      pairVideo.classList.remove('visible');
+      if (pairStream) {
+        pairStream.getTracks().forEach(t => t.stop());
+        pairStream = null;
+      }
+    }
+
+    pairScanBtn.addEventListener('click', () => {
+      if (pairScanning) stopScanning();
+      else startScanning();
+    });
+
+    async function scanLoop() {
+      if (!pairScanning) return;
+      try {
+        const codes = await barcodeDetector.detect(pairVideo);
+        if (codes.length > 0 && codes[0].rawValue) {
+          stopScanning();
+          closePairOverlay();
+          connectViaPairing(codes[0].rawValue);
+          return;
+        }
+      } catch (e) {
+        // Detection can transiently fail (e.g. video not ready yet) — keep trying.
+      }
+      requestAnimationFrame(scanLoop);
+    }
+
+    pairConnectBtn.addEventListener('click', () => {
+      const url = pairInput.value.trim();
+      if (!url) return;
+      closePairOverlay();
+      connectViaPairing(url);
+    });
+
+    pairInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') pairConnectBtn.click();
+    });
+
+    function waitForIceGatheringComplete(peerConnection) {
+      if (peerConnection.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise((resolve) => {
+        function check() {
+          if (peerConnection.iceGatheringState === 'complete') {
+            peerConnection.removeEventListener('icegatheringstatechange', check);
+            resolve();
+          }
+        }
+        peerConnection.addEventListener('icegatheringstatechange', check);
+        // Defensive timeout matching the sender side's 3s safety net — not expected
+        // to trigger under normal iceServers:[] LAN gathering.
+        setTimeout(() => {
+          peerConnection.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }, 3000);
+      });
+    }
+
+    async function connectViaPairing(offerUrl) {
+      setStatus('connecting');
+      reconnecting = false;
+
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      createPeerConnection();
+
+      try {
+        const offerResp = await fetch(offerUrl);
+        if (!offerResp.ok) throw new Error(`Could not fetch offer (${offerResp.status})`);
+        const offerPayload = await offerResp.json();
+
+        await pc.setRemoteDescription({ type: offerPayload.type, sdp: offerPayload.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // Non-trickle on this side too — the sender has no ongoing signaling
+        // channel to receive candidates on after this one POST, so wait for full
+        // local ICE gathering and embed everything in the single answer we send.
+        await waitForIceGatheringComplete(pc);
+
+        const answerUrl = offerUrl.replace('/offer', '/answer');
+        const answerResp = await fetch(answerUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp })
+        });
+        if (!answerResp.ok) throw new Error(`Sender rejected answer (${answerResp.status})`);
+
+        startStatsPolling();
+      } catch (e) {
+        console.error('Pairing connection failed:', e);
+        setStatus('waiting');
+        statusText.textContent = 'Could not connect to sender — check the pairing URL and try again.';
+        statusEl.style.opacity = '1';
+        statusEl.style.pointerEvents = 'auto';
+      }
     }
 
     document.addEventListener('keydown', () => {

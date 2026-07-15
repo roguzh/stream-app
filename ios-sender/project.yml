@@ -1,0 +1,89 @@
+name: ScreenMirrorSender
+options:
+  bundleIdPrefix: com.streamapp
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  StreamWebRTC:
+    url: https://github.com/GetStream/stream-video-swift-webrtc.git
+    exactVersion: 148.0.0
+
+targets:
+  ScreenMirrorSender:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: ScreenMirrorSender
+      - path: Shared
+    info:
+      path: Generated/ScreenMirrorSender-Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSLocalNetworkUsageDescription: "Used to advertise this device on your local network so a receiver can find and pair with it."
+        NSBonjourServices:
+          - "_screenmirror._tcp"
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Generated/ScreenMirrorSender.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.streamapp.screenmirror
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.streamapp.iossender
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - target: ScreenMirrorBroadcastExtension
+        embed: true
+      - package: StreamWebRTC
+
+  ScreenMirrorBroadcastExtension:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: ScreenMirrorBroadcastExtension
+      - path: Shared
+    info:
+      path: Generated/ScreenMirrorBroadcastExtension-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+        NSLocalNetworkUsageDescription: "Used to advertise this device on your local network so a receiver can find and pair with it."
+        NSBonjourServices:
+          - "_screenmirror._tcp"
+    entitlements:
+      path: Generated/ScreenMirrorBroadcastExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.streamapp.screenmirror
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.streamapp.iossender.broadcast
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        SKIP_INSTALL: "YES"
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: StreamWebRTC
+
+schemes:
+  ScreenMirrorSender:
+    build:
+      targets:
+        ScreenMirrorSender: all
+        ScreenMirrorBroadcastExtension: all
+    run:
+      config: Debug
+    archive:
+      config: Release
