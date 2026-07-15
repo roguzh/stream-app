@@ -127,6 +127,25 @@ Both stats overlays now surface the diagnostics that matter for chasing quality 
 - **Sender**: codec in use, and `qualityLimitationReason` (`cpu`, `bandwidth`, or `none`) — tells you definitively whether the Mac's encoder is the bottleneck.
 - **Receiver**: dropped frames per second — if this climbs during movie playback, the TV's decoder (not the network or the sender) can't keep up, which is common on lower-power Android TV boxes doing software decode of complex content.
 
+### Resolution presets
+
+The sender has a **Stream quality** dropdown with three presets, each scaling both the capture constraints and the bitrate ceiling together:
+
+| Preset | Resolution | Framerate | Bitrate ceiling |
+|---|---|---|---|
+| 1080p60 (default) | 1920×1080 | 60fps | 20 Mbps |
+| 1440p60 | 2560×1440 | 60fps | 30 Mbps |
+| 4K30 | 3840×2160 | 30fps (60fps at 4K is unrealistic for real-time software/most hardware encoders) | 40 Mbps |
+
+Higher presets need more from *both* ends — the Mac's encoder and the TV's decoder. If the receiver's dropped-frames stat climbs after switching up a preset, that's the TV's decoder falling behind, not a sender or network problem; step back down.
+
+### Audio quality and "staggering"
+
+If audio sounds like it's stuttering or dropping out momentarily, two things were actually wrong, both now fixed:
+
+1. **Audio was never given the same sender priority as video.** `RTCRtpEncodingParameters.priority` defaults to `'low'` — video was explicitly boosted to `'high'`, but audio was left at the default. Under any network congestion, WebRTC's bandwidth allocation favors the higher-priority stream, so audio was the first thing sacrificed. Audio is now set to `'high'` priority too, with a 128 kbps ceiling — plenty for stereo system audio.
+2. **Opus was running with voice-call defaults.** DTX (discontinuous transmission, which aggressively stops sending audio during "silence") creates audible gaps in music/movie audio that isn't actually silent, and without in-band FEC a single lost Wi-Fi packet drops a chunk of audio outright instead of being reconstructed. The offer SDP now explicitly sets `usedtx=0` and `useinbandfec=1` on the Opus payload (along with `stereo=1` to prevent downmixing).
+
 ## Project structure
 
 ```

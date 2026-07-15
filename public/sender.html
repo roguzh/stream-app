@@ -68,7 +68,7 @@
     margin-bottom: 6px;
   }
 
-  #audioSourceSelect {
+  #audioSourceSelect, #qualitySelect {
     width: 100%;
     min-height: 44px;
     font-size: 1rem;
@@ -81,7 +81,7 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    #audioSourceSelect {
+    #audioSourceSelect, #qualitySelect {
       background: #2a2a2e;
       color: #eee;
       border-color: #444;
@@ -170,6 +170,18 @@
   <h1>Stream to TV</h1>
 
   <div class="card">
+    <label for="qualitySelect" class="field-label">Stream quality</label>
+    <select id="qualitySelect">
+      <option value="1080p60" selected>1080p60 — Standard (20 Mbps ceiling)</option>
+      <option value="1440p60">1440p60 — High (30 Mbps ceiling)</option>
+      <option value="4k30">4K30 — Maximum (40 Mbps ceiling)</option>
+    </select>
+    <div class="note">
+      Higher presets need more from both the Mac's encoder and the TV's decoder.
+      If the receiver's dropped-frames stat climbs after switching, its decoder
+      can't keep up — step back down a preset.
+    </div>
+
     <label for="audioSourceSelect" class="field-label">System audio source</label>
     <select id="audioSourceSelect">
       <option value="">No extra audio (screen/tab audio only)</option>
@@ -204,6 +216,13 @@
     const ROOM = 'stream';
     const socket = io();
 
+    const QUALITY_PRESETS = {
+      '1080p60': { width: 1920, height: 1080, frameRate: 60, videoBitrate: 20_000_000 },
+      '1440p60': { width: 2560, height: 1440, frameRate: 60, videoBitrate: 30_000_000 },
+      '4k30': { width: 3840, height: 2160, frameRate: 30, videoBitrate: 40_000_000 }
+    };
+    const AUDIO_BITRATE = 128_000;
+
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const statusEl = document.getElementById('status');
@@ -211,6 +230,7 @@
     const iosNote = document.getElementById('ios-note');
     const receiverUrlEl = document.getElementById('receiver-url');
     const audioSourceSelect = document.getElementById('audioSourceSelect');
+    const qualitySelect = document.getElementById('qualitySelect');
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -339,6 +359,39 @@
       }).join('\r\n');
     }
 
+    // Opus defaults are tuned for voice calls, not screen/movie audio, and that's a
+    // real source of "staggering": DTX (silence suppression) creates audible gaps in
+    // anything that isn't a voice call, and without in-band FEC a single lost packet
+    // over Wi-Fi drops a chunk of audio outright instead of reconstructing it.
+    function enhanceOpusAudio(sdp) {
+      const lines = sdp.split('\r\n');
+      let opusPayload = null;
+      lines.forEach(line => {
+        const match = line.match(/^a=rtpmap:(\d+) opus\/48000/);
+        if (match) opusPayload = match[1];
+      });
+      if (!opusPayload) return sdp;
+
+      const fmtpParams = 'minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;usedtx=0;maxaveragebitrate=' + AUDIO_BITRATE;
+      let foundFmtp = false;
+      const result = lines.map(line => {
+        if (line.startsWith(`a=fmtp:${opusPayload} `)) {
+          foundFmtp = true;
+          return `a=fmtp:${opusPayload} ${fmtpParams}`;
+        }
+        return line;
+      });
+
+      if (!foundFmtp) {
+        const rtpmapIndex = result.findIndex(l => l.startsWith(`a=rtpmap:${opusPayload} opus/48000`));
+        if (rtpmapIndex !== -1) {
+          result.splice(rtpmapIndex + 1, 0, `a=fmtp:${opusPayload} ${fmtpParams}`);
+        }
+      }
+
+      return result.join('\r\n');
+    }
+
     // H.264 profile ranking: High > Main > Baseline, decoded from profile-level-id's first byte.
     function h264ProfileRank(codec) {
       const match = (codec.sdpFmtpLine || '').match(/profile-level-id=([0-9a-fA-F]{6})/);
@@ -370,28 +423,48 @@
       }
     }
 
-    async function applyHighQualityParams(pc) {
+    async function applyHighQualityParams(pc, videoBitrate, videoFramerate) {
       const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-      if (!videoSender) return;
-      const params = videoSender.getParameters();
-      if (!params.encodings || params.encodings.length === 0) {
-        params.encodings = [{}];
+      if (videoSender) {
+        const params = videoSender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        // LAN has bandwidth to spare — a generous ceiling means the encoder never has
+        // to starve complex/high-motion content (movies, games) of bits.
+        params.encodings[0].maxBitrate = videoBitrate;
+        params.encodings[0].maxFramerate = videoFramerate;
+        params.encodings[0].scaleResolutionDownBy = 1;
+        params.encodings[0].networkPriority = 'high';
+        params.encodings[0].priority = 'high';
+        // When the encoder does have to shed load, drop resolution before framerate —
+        // the whole point of this app is smooth motion, not maximum sharpness.
+        params.degradationPreference = 'maintain-framerate';
+        try {
+          await videoSender.setParameters(params);
+        } catch (e) {
+          console.warn('Could not set video encoding params:', e);
+        }
       }
-      // LAN has bandwidth to spare — a generous ceiling means the encoder never has
-      // to starve complex/high-motion content (movies, games) of bits.
-      params.encodings[0].maxBitrate = 20_000_000;
-      params.encodings[0].maxFramerate = 60;
-      params.encodings[0].scaleResolutionDownBy = 1;
-      params.encodings[0].networkPriority = 'high';
-      params.encodings[0].priority = 'high';
-      // When the encoder does have to shed load, drop resolution before framerate —
-      // the whole point of this app is smooth motion, not maximum sharpness.
-      params.degradationPreference = 'maintain-framerate';
-      try {
-        await videoSender.setParameters(params);
-        console.log('High quality params applied');
-      } catch (e) {
-        console.warn('Could not set encoding params:', e);
+
+      // Audio was never configured here before — it kept the browser's default
+      // 'low' priority while video got boosted to 'high'. Under any congestion the
+      // browser favors the higher-priority stream, so audio was starved first —
+      // that's what "sound staggers" actually was. Bring audio to parity with video.
+      const audioSender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+      if (audioSender) {
+        const audioParams = audioSender.getParameters();
+        if (!audioParams.encodings || audioParams.encodings.length === 0) {
+          audioParams.encodings = [{}];
+        }
+        audioParams.encodings[0].maxBitrate = AUDIO_BITRATE;
+        audioParams.encodings[0].networkPriority = 'high';
+        audioParams.encodings[0].priority = 'high';
+        try {
+          await audioSender.setParameters(audioParams);
+        } catch (e) {
+          console.warn('Could not set audio encoding params:', e);
+        }
       }
     }
 
@@ -399,11 +472,13 @@
       startBtn.disabled = true;
       setStatus('Choose what to share…');
 
+      const quality = QUALITY_PRESETS[qualitySelect.value] || QUALITY_PRESETS['1080p60'];
+
       const constraints = {
         video: {
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 60, max: 60 },
+          width: { ideal: quality.width, max: quality.width },
+          height: { ideal: quality.height, max: quality.height },
+          frameRate: { ideal: quality.frameRate, max: quality.frameRate },
           cursor: 'always'
         },
         audio: {
@@ -475,7 +550,7 @@
         if (pc.connectionState === 'connected') {
           setStatus('● Live', 'live');
           statsEl.classList.add('visible');
-          applyHighQualityParams(pc);
+          applyHighQualityParams(pc, quality.videoBitrate, quality.frameRate);
           startStatsPolling();
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           setStatus('Connection lost', 'error');
@@ -485,13 +560,13 @@
       setH264CodecPreference(pc);
 
       const offer = await pc.createOffer();
-      offer.sdp = preferH264(offer.sdp);
+      offer.sdp = enhanceOpusAudio(preferH264(offer.sdp));
       await pc.setLocalDescription(offer);
       socket.emit('offer', offer);
 
       // Apply quality params as soon as the encoder exists rather than waiting for
       // 'connected' — avoids several seconds of default-bitrate ramp-up on every start.
-      applyHighQualityParams(pc);
+      applyHighQualityParams(pc, quality.videoBitrate, quality.frameRate);
 
       const { width, height } = stream.getVideoTracks()[0].getSettings();
       document.getElementById('stat-res').textContent = `${width}×${height}`;
