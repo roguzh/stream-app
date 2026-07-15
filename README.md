@@ -14,7 +14,9 @@ Point any browser's screen-share at another browser's `<video>` tag, in H.264, a
 
 - Peer-to-peer WebRTC video — server only relays signaling, never touches media
 - H.264 forced via `setCodecPreferences()` (highest available profile) with SDP munging as fallback
-- Tuned for sustained 60fps under motion: `contentHint`, `degradationPreference`, and a 20 Mbps bitrate ceiling — see [Quality tuning](#quality-tuning)
+- Tuned for sustained 60fps under motion: `contentHint`, `degradationPreference`, and a bitrate ceiling per quality preset — see [Quality tuning](#quality-tuning)
+- Selectable resolution presets (1080p60/1440p60/4K30) with automatic fallback when the encoder or the TV's decoder falls behind — see [Automatic quality fallback](#automatic-quality-fallback)
+- Optional password protection on the signaling channel — see [Password protection](#password-protection)
 - Fullscreen receiver UI with a live stats overlay (resolution, fps, dropped frames, bitrate, codec, connection state)
 - QR code on the sender page for quick access to the receiver URL
 - Auto-reconnect on the receiver if the sender drops
@@ -86,13 +88,33 @@ The sender page auto-detects a device with "blackhole" in its name and pre-selec
 
 ### Configuration
 
-The only runtime setting is the port:
-
 ```bash
-PORT=8080 npm start
+PORT=8080 STREAM_PASSWORD=hunter2 npm start
 ```
 
-Defaults to `3000` if unset.
+- `PORT` — defaults to `3000` if unset.
+- `STREAM_PASSWORD` — optional, see [Password protection](#password-protection) below. Unset by default (open access).
+
+### Password protection
+
+Set `STREAM_PASSWORD` when starting the server to require a password before any sender or receiver can join the signaling channel:
+
+```bash
+STREAM_PASSWORD=hunter2 npm start
+```
+
+The static pages (`/sender`, `/receiver`) still load without a password — the app's source is public on GitHub either way, so there's nothing sensitive in the HTML/JS itself. What's actually gated is the WebRTC signaling handshake, i.e. who can join the room and see or inject the stream. When a password is required, the browser sender/receiver pages show a password prompt and remember it in `localStorage` for next time; the native Android app has a password field on its server-entry screen, saved alongside the server address.
+
+Leave `STREAM_PASSWORD` unset for open access (the default) — reasonable for a typical home LAN.
+
+### Automatic quality fallback
+
+The sender's **Auto-adjust quality** checkbox (on by default) watches two independent signals every second and steps the stream down through a ladder of lower resolution/bitrate/framerate combinations when either one is struggling:
+
+- **Encoder-side**: the sender's own `qualityLimitationReason` stat (`cpu` or `bandwidth`) — the Mac itself can't keep up.
+- **Decoder-side**: dropped-frames-per-second reported back by the receiver over the signaling channel — the TV can't keep up, which the sender has no way to see on its own otherwise.
+
+It's quick to step down (3 consecutive bad readings, ~3 seconds) and slow to step back up (15 consecutive clean readings, ~15 seconds) to avoid visibly oscillating between quality levels. Steps only ever go as high as whatever preset you selected in the **Stream quality** dropdown — auto-adjust narrows down from there, it never exceeds your chosen ceiling. When it's kicked in, the sender's stats overlay shows `auto: reduced (L1)` or `(L2)` next to the limitation reason. Uncheck the box to pin to your manually selected preset instead.
 
 ## How it works
 
@@ -165,8 +187,8 @@ Instead of opening `receiver.html` in whatever browser the Mi Box has, there's a
 ## Known limitations
 
 - **LAN only, by design.** No STUN/TURN servers are configured, so this will not work across different networks (e.g. streaming to a TV that isn't on the same Wi-Fi/router).
-- **No authentication.** Anyone on the LAN can open `/sender` or `/receiver`. Fine for a home network, not something to expose beyond that.
-- **Single sender, single receiver.** The signaling relay uses one hardcoded room (`"stream"`); a second sender or receiver joining will conflict with an existing session rather than creating a separate one.
+- **No authentication by default.** Anyone on the LAN can join the stream unless you set `STREAM_PASSWORD` — see [Password protection](#password-protection). Even with a password, the static pages themselves still load for anyone (harmless, since the source is public anyway); only joining the actual WebRTC session is gated.
+- **Single sender, single receiver.** The signaling relay uses one hardcoded room (`"stream"`). A second sender or receiver joining now gets a clear rejection message instead of silently cross-talking with the existing session, but there's still no support for genuinely running more than one of each at a time.
 - **No HTTPS.** `getDisplayMedia()` works over plain HTTP for `localhost` and LAN IPs in Chrome, so this is intentional — don't try to expose this server outside your LAN.
 - **iPhone Safari can only share a browser tab**, not the full device screen, and doesn't capture system audio at all — no workaround exists on iOS.
 - **Chrome on Mac only captures audio natively when sharing a tab.** Full-screen and window capture never include app audio (macOS/Chrome platform limitation) — see [Streaming system audio (Mac)](#streaming-system-audio-mac) for the BlackHole-based workaround.

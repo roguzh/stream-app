@@ -68,6 +68,21 @@
     margin-bottom: 6px;
   }
 
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    margin: 12px 0;
+    cursor: pointer;
+  }
+
+  .checkbox-label input {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+
   #audioSourceSelect, #qualitySelect {
     width: 100%;
     min-height: 44px;
@@ -182,6 +197,11 @@
       can't keep up — step back down a preset.
     </div>
 
+    <label class="checkbox-label">
+      <input type="checkbox" id="autoQualityToggle" checked />
+      Auto-adjust quality when the encoder or TV falls behind
+    </label>
+
     <label for="audioSourceSelect" class="field-label">System audio source</label>
     <select id="audioSourceSelect">
       <option value="">No extra audio (screen/tab audio only)</option>
@@ -212,9 +232,10 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/auth.js"></script>
   <script>
     const ROOM = 'stream';
-    const socket = io();
+    const socket = createAuthenticatedSocket();
 
     const QUALITY_PRESETS = {
       '1080p60': { width: 1920, height: 1080, frameRate: 60, videoBitrate: 20_000_000 },
@@ -222,6 +243,18 @@
       '4k30': { width: 3840, height: 2160, frameRate: 30, videoBitrate: 40_000_000 }
     };
     const AUDIO_BITRATE = 128_000;
+
+    // Auto-adjust ladder, relative to whatever preset is selected — level 0 is the
+    // preset as-is. Scale resolution down before framerate, matching the same
+    // maintain-framerate philosophy as the rest of the quality tuning.
+    const QUALITY_LEVELS = [
+      { scaleResolutionDownBy: 1,   bitrateFactor: 1.0,  frameRateFactor: 1.0 },
+      { scaleResolutionDownBy: 1.5, bitrateFactor: 0.6,  frameRateFactor: 1.0 },
+      { scaleResolutionDownBy: 2.5, bitrateFactor: 0.35, frameRateFactor: 0.5 }
+    ];
+    const DROPPED_FRAMES_THRESHOLD = 3;
+    const STEP_DOWN_STREAK = 3;
+    const STEP_UP_STREAK = 15;
 
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -231,6 +264,7 @@
     const receiverUrlEl = document.getElementById('receiver-url');
     const audioSourceSelect = document.getElementById('audioSourceSelect');
     const qualitySelect = document.getElementById('qualitySelect');
+    const autoQualityToggle = document.getElementById('autoQualityToggle');
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -240,6 +274,25 @@
       audioSourceSelect.closest('.card').querySelector('#audioSourceSelect').style.display = 'none';
       audioSourceSelect.closest('.card').querySelector('.field-label').style.display = 'none';
     }
+
+    // Remember the last picks across reloads instead of resetting to defaults every time.
+    const STORAGE_QUALITY = 'stream_app_quality';
+    const STORAGE_AUDIO_DEVICE = 'stream_app_audio_device';
+
+    try {
+      const storedQuality = localStorage.getItem(STORAGE_QUALITY);
+      if (storedQuality && QUALITY_PRESETS[storedQuality]) {
+        qualitySelect.value = storedQuality;
+      }
+    } catch (e) {}
+
+    qualitySelect.addEventListener('change', () => {
+      try { localStorage.setItem(STORAGE_QUALITY, qualitySelect.value); } catch (e) {}
+    });
+
+    audioSourceSelect.addEventListener('change', () => {
+      try { localStorage.setItem(STORAGE_AUDIO_DEVICE, audioSourceSelect.value); } catch (e) {}
+    });
 
     // Virtual audio devices (BlackHole, Loopback, Soundflower) show up as regular
     // audioinput devices — this is how system-wide audio gets into the stream on Mac,
@@ -261,13 +314,22 @@
           }
         }
 
-        const previousValue = audioSourceSelect.value;
+        // Distinguish "no stored preference yet" (null) from "explicitly chose no
+        // extra audio" (stored as '') — the latter must not be overridden by auto-detect.
+        let storedDevice = null;
+        let hasStoredPreference = false;
+        try {
+          storedDevice = localStorage.getItem(STORAGE_AUDIO_DEVICE);
+          hasStoredPreference = storedDevice !== null;
+        } catch (e) {}
+        const previousValue = hasStoredPreference ? storedDevice : audioSourceSelect.value;
+
         audioSourceSelect.innerHTML = '<option value="">No extra audio (screen/tab audio only)</option>';
         audioInputs.forEach((d, i) => {
           const opt = document.createElement('option');
           opt.value = d.deviceId;
           opt.textContent = d.label || `Audio input ${i + 1}`;
-          if (/blackhole|loopback|soundflower/i.test(d.label)) opt.selected = true;
+          if (!hasStoredPreference && /blackhole|loopback|soundflower/i.test(d.label)) opt.selected = true;
           audioSourceSelect.appendChild(opt);
         });
         if ([...audioSourceSelect.options].some(o => o.value === previousValue)) {
@@ -295,6 +357,16 @@
     let stream = null;
     let statsInterval = null;
     let prevBytesSent = 0;
+    let currentQuality = null;
+    let autoLevel = 0;
+    let downStreak = 0;
+    let upStreak = 0;
+    let lastReceiverDropped = 0;
+    let lastQualityLimitation = 'none';
+
+    socket.on('receiver-quality', (data) => {
+      lastReceiverDropped = (data && data.droppedPerSec) || 0;
+    });
 
     function setStatus(text, cls) {
       statusEl.textContent = text;
@@ -309,11 +381,17 @@
     }
 
     socket.on('connect', () => {
-      socket.emit('join', ROOM);
+      socket.emit('join', { room: ROOM, role: 'sender' });
     });
 
-    socket.on('connect_error', () => {
-      setStatus('Cannot reach server — is it running?', 'error');
+    socket.on('connect_error', (err) => {
+      if (!(err && err.message === 'Incorrect password')) {
+        setStatus('Cannot reach server — is it running?', 'error');
+      }
+    });
+
+    socket.on('join-rejected', (data) => {
+      setStatus(data.reason || 'Could not join — room already in use', 'error');
     });
 
     socket.on('answer', async (answer) => {
@@ -423,29 +501,36 @@
       }
     }
 
-    async function applyHighQualityParams(pc, videoBitrate, videoFramerate) {
+    // Shared by the initial quality-preset setup and the auto-adjust ladder below —
+    // both just need to push new encoding params to the existing video sender, no
+    // renegotiation required since scaleResolutionDownBy/maxBitrate/maxFramerate are
+    // encoder-side knobs, not SDP-level ones.
+    async function setVideoEncodingParams(pc, { maxBitrate, maxFramerate, scaleResolutionDownBy }) {
       const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-      if (videoSender) {
-        const params = videoSender.getParameters();
-        if (!params.encodings || params.encodings.length === 0) {
-          params.encodings = [{}];
-        }
-        // LAN has bandwidth to spare — a generous ceiling means the encoder never has
-        // to starve complex/high-motion content (movies, games) of bits.
-        params.encodings[0].maxBitrate = videoBitrate;
-        params.encodings[0].maxFramerate = videoFramerate;
-        params.encodings[0].scaleResolutionDownBy = 1;
-        params.encodings[0].networkPriority = 'high';
-        params.encodings[0].priority = 'high';
-        // When the encoder does have to shed load, drop resolution before framerate —
-        // the whole point of this app is smooth motion, not maximum sharpness.
-        params.degradationPreference = 'maintain-framerate';
-        try {
-          await videoSender.setParameters(params);
-        } catch (e) {
-          console.warn('Could not set video encoding params:', e);
-        }
+      if (!videoSender) return;
+      const params = videoSender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
       }
+      params.encodings[0].maxBitrate = maxBitrate;
+      params.encodings[0].maxFramerate = maxFramerate;
+      params.encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].priority = 'high';
+      // When the encoder does have to shed load, drop resolution before framerate —
+      // the whole point of this app is smooth motion, not maximum sharpness.
+      params.degradationPreference = 'maintain-framerate';
+      try {
+        await videoSender.setParameters(params);
+      } catch (e) {
+        console.warn('Could not set video encoding params:', e);
+      }
+    }
+
+    async function applyHighQualityParams(pc, videoBitrate, videoFramerate) {
+      // LAN has bandwidth to spare — a generous ceiling means the encoder never has
+      // to starve complex/high-motion content (movies, games) of bits.
+      await setVideoEncodingParams(pc, { maxBitrate: videoBitrate, maxFramerate: videoFramerate, scaleResolutionDownBy: 1 });
 
       // Audio was never configured here before — it kept the browser's default
       // 'low' priority while video got boosted to 'high'. Under any congestion the
@@ -468,11 +553,58 @@
       }
     }
 
+    async function applyQualityLevel(level) {
+      if (!pc || !currentQuality) return;
+      const l = QUALITY_LEVELS[level];
+      autoLevel = level;
+      await setVideoEncodingParams(pc, {
+        maxBitrate: Math.round(currentQuality.videoBitrate * l.bitrateFactor),
+        maxFramerate: Math.max(15, Math.round(currentQuality.frameRate * l.frameRateFactor)),
+        scaleResolutionDownBy: l.scaleResolutionDownBy
+      });
+      console.log(`Auto quality: level ${level} (scale ${l.scaleResolutionDownBy}x, ${Math.round(currentQuality.videoBitrate * l.bitrateFactor / 1_000_000)} Mbps)`);
+    }
+
+    // Called from the sender's own stats poll (1/sec). Two independent signals feed
+    // this: the encoder's own qualityLimitationReason (this machine struggling to
+    // encode), and receiver-quality events relayed from the receiver's dropped-frames
+    // count (the TV struggling to decode). Either one sustained triggers a step down.
+    // Quick to downgrade, slow to upgrade — avoids visible oscillation.
+    function evaluateAutoQuality() {
+      if (!autoQualityToggle.checked || !pc || !currentQuality) return;
+
+      const strugglingEncodeSide = lastQualityLimitation && lastQualityLimitation !== 'none';
+      const strugglingDecodeSide = lastReceiverDropped > DROPPED_FRAMES_THRESHOLD;
+      const struggling = strugglingEncodeSide || strugglingDecodeSide;
+
+      if (struggling) {
+        downStreak++;
+        upStreak = 0;
+        if (downStreak >= STEP_DOWN_STREAK && autoLevel < QUALITY_LEVELS.length - 1) {
+          applyQualityLevel(autoLevel + 1);
+          downStreak = 0;
+        }
+      } else {
+        upStreak++;
+        downStreak = 0;
+        if (upStreak >= STEP_UP_STREAK && autoLevel > 0) {
+          applyQualityLevel(autoLevel - 1);
+          upStreak = 0;
+        }
+      }
+    }
+
     async function startStreaming() {
       startBtn.disabled = true;
       setStatus('Choose what to share…');
 
       const quality = QUALITY_PRESETS[qualitySelect.value] || QUALITY_PRESETS['1080p60'];
+      currentQuality = quality;
+      autoLevel = 0;
+      downStreak = 0;
+      upStreak = 0;
+      lastReceiverDropped = 0;
+      lastQualityLimitation = 'none';
 
       const constraints = {
         video: {
@@ -618,7 +750,12 @@
       document.getElementById('stat-codec').textContent = codecReport ? codecReport.mimeType.replace('video/', '') : '–';
       // "cpu" or "bandwidth" here means the encoder is actively degrading quality —
       // the single most useful signal for diagnosing why motion looks bad.
-      document.getElementById('stat-dropped').textContent = qualityLimitation ? `limit: ${qualityLimitation}` : 'limit: none';
+      const limitText = qualityLimitation ? `limit: ${qualityLimitation}` : 'limit: none';
+      const autoText = autoLevel > 0 ? ` · auto: reduced (L${autoLevel})` : '';
+      document.getElementById('stat-dropped').textContent = limitText + autoText;
+
+      lastQualityLimitation = qualityLimitation || 'none';
+      evaluateAutoQuality();
     }
 
     startBtn.addEventListener('click', startStreaming);

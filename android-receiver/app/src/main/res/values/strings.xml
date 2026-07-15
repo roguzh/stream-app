@@ -5,6 +5,7 @@
     <string name="reconnecting">Stream ended — reconnecting…</string>
     <string name="cannot_reach_server">Cannot reach server — check the address and that it\'s running</string>
     <string name="server_address_hint">Server address, e.g. 192.168.1.19:3000</string>
+    <string name="server_password_hint">Password (leave blank if none)</string>
     <string name="connect">Connect</string>
     <string name="change_server">Change server</string>
 </resources>

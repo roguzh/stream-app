@@ -11,15 +11,20 @@ import org.json.JSONObject
  * as raw JSON. The server never inspects these payloads, so this mirrors receiver.html
  * exactly rather than defining a new protocol.
  */
-class SignalingClient(private val serverUrl: String, private val listener: Listener) {
+class SignalingClient(
+    private val serverUrl: String,
+    private val password: String?,
+    private val listener: Listener
+) {
 
     interface Listener {
         fun onConnected()
-        fun onConnectError()
+        fun onConnectError(message: String?)
         fun onDisconnected()
         fun onOffer(sdp: String)
         fun onIceCandidate(sdpMid: String?, sdpMLineIndex: Int, candidate: String)
         fun onPeerDisconnected()
+        fun onJoinRejected(reason: String?)
     }
 
     private var socket: Socket? = null
@@ -29,17 +34,27 @@ class SignalingClient(private val serverUrl: String, private val listener: Liste
             reconnection = true
             reconnectionDelay = 1000
             reconnectionDelayMax = 5000
+            // The server only checks this when STREAM_PASSWORD is set on its end —
+            // harmless to always send, matches the web clients' auth.js behavior.
+            auth = mapOf("password" to (password ?: ""))
         }
         val s = IO.socket(serverUrl, opts)
         socket = s
 
         s.on(Socket.EVENT_CONNECT) {
-            s.emit("join", ROOM)
+            val joinPayload = JSONObject().apply {
+                put("room", ROOM)
+                put("role", "receiver")
+            }
+            s.emit("join", joinPayload)
             listener.onConnected()
         }
-        s.on(Socket.EVENT_CONNECT_ERROR) {
-            Log.w(TAG, "connect_error: ${it.joinToString()}")
-            listener.onConnectError()
+        s.on(Socket.EVENT_CONNECT_ERROR) { args ->
+            val message = args.getOrNull(0)?.let { arg ->
+                (arg as? Exception)?.message ?: arg.toString()
+            }
+            Log.w(TAG, "connect_error: $message")
+            listener.onConnectError(message)
         }
         s.on(Socket.EVENT_DISCONNECT) {
             listener.onDisconnected()
@@ -57,6 +72,10 @@ class SignalingClient(private val serverUrl: String, private val listener: Liste
         }
         s.on("peer-disconnected") {
             listener.onPeerDisconnected()
+        }
+        s.on("join-rejected") { args ->
+            val data = args.getOrNull(0) as? JSONObject
+            listener.onJoinRejected(data?.optString("reason"))
         }
 
         s.connect()

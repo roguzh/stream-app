@@ -78,7 +78,27 @@
             android:textColor="@color/text_primary"
             android:textColorHint="#888888"
             android:singleLine="true"
+            android:imeOptions="actionNext" />
+
+        <EditText
+            android:id="@+id/serverPasswordInput"
+            android:layout_width="420dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:hint="@string/server_password_hint"
+            android:inputType="textPassword"
+            android:textColor="@color/text_primary"
+            android:textColorHint="#888888"
+            android:singleLine="true"
             android:imeOptions="actionDone" />
+
+        <TextView
+            android:id="@+id/serverEntryError"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#FF6B6B"
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/connectButton"

@@ -7,6 +7,8 @@ What's better than the browser receiver:
 - No autoplay-mute dance — native audio playback just works, no "tap for sound" button needed
 - No "tap to go fullscreen" step — the app is immersive fullscreen from launch
 - A real launcher banner/icon so it shows up in the Android TV home screen
+- Launches automatically on boot (`BootReceiver`), so the Mi Box is always ready without manually reopening the app after a reboot or power cycle
+- Supports the same optional password protection as the web clients (see the main [README's Password protection section](../README.md#password-protection)) — enter it alongside the server address on first launch
 
 This is a genuinely different toolchain from the rest of the project (Kotlin/Gradle/Android Studio instead of Node/HTML), and **I wasn't able to compile or run this myself** — there's no Android SDK, emulator, or physical Mi Box available in the environment this was written in. The WebRTC/Socket.io API calls are written against the current stable library versions as of writing, but if Android Studio's first Gradle sync flags a small API mismatch, that's expected — it'll be a quick fix guided by the inline error, not a sign the whole approach is wrong.
 
@@ -46,7 +48,7 @@ If `adb connect` doesn't work (some Mi Box firmware only exposes ADB over USB, n
 
 ## 5. First launch
 
-The app asks for the signaling server's address — enter the same `host:port` that `npm start` prints as the `Network:` URL in the main project (e.g. `192.168.1.19:3000`), no `http://` needed. It's saved on-device, so this is a one-time step; a "Change server" button is available later if your Mac's IP changes.
+The app asks for the signaling server's address — enter the same `host:port` that `npm start` prints as the `Network:` URL in the main project (e.g. `192.168.1.19:3000`), no `http://` needed. If the server was started with `STREAM_PASSWORD` set, also fill in the password field (leave it blank otherwise). Both are saved on-device, so this is a one-time step; a "Change server" button is available later if your Mac's IP changes or the password was wrong.
 
 Once connected, it behaves like the browser receiver: waits for a stream, goes fullscreen automatically when one arrives, and shows a stats overlay (resolution, decoded fps, dropped frames/sec, codec) on any remote key press.
 

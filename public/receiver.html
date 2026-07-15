@@ -138,9 +138,10 @@
   <div id="stats"></div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/auth.js"></script>
   <script>
     const ROOM = 'stream';
-    const socket = io();
+    const socket = createAuthenticatedSocket();
     const video = document.getElementById('video');
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('status-text');
@@ -271,7 +272,7 @@
     }
 
     function joinRoom() {
-      socket.emit('join', ROOM);
+      socket.emit('join', { room: ROOM, role: 'receiver' });
     }
 
     socket.on('connect', () => {
@@ -279,9 +280,16 @@
       setStatus('waiting');
     });
 
-    socket.on('connect_error', () => {
+    socket.on('connect_error', (err) => {
+      if (err && err.message === 'Incorrect password') return;
       statusText.textContent = 'Cannot reach server — is it running?';
       statusEl.style.opacity = '1';
+    });
+
+    socket.on('join-rejected', (data) => {
+      statusText.textContent = data.reason || 'Could not join — room already in use';
+      statusEl.style.opacity = '1';
+      statusEl.style.pointerEvents = 'auto';
     });
 
     socket.on('offer', async (offer) => {
@@ -361,6 +369,10 @@
         `buffer ${bufferHealth}s\n` +
         `${codecName}\n` +
         `${connectionState}`;
+
+      // Feeds the sender's auto quality fallback — dropped frames climbing here means
+      // this device's decoder can't keep up, which the sender has no way to see on its own.
+      socket.emit('receiver-quality', { droppedPerSec: droppedDelta });
     }
 
     document.addEventListener('keydown', () => {

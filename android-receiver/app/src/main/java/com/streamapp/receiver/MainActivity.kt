@@ -1,5 +1,7 @@
 package com.streamapp.receiver
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.os.Bundle
 import android.os.Handler
@@ -52,6 +54,8 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
         binding.videoRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         binding.videoRenderer.setMirror(false)
 
+        startPulseAnimation()
+
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(applicationContext)
                 .createInitializationOptions()
@@ -71,18 +75,23 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
             showServerEntry(prefill = false)
         } else {
             binding.serverUrlText.text = savedAddress
-            startSignaling(savedAddress)
+            startSignaling(savedAddress, prefs.getString(KEY_SERVER_PASSWORD, null))
         }
     }
 
     private fun onConnectClicked() {
         val address = binding.serverAddressInput.text.toString().trim()
         if (address.isEmpty()) return
-        prefs.edit().putString(KEY_SERVER_ADDRESS, address).apply()
+        val password = binding.serverPasswordInput.text.toString()
+        prefs.edit()
+            .putString(KEY_SERVER_ADDRESS, address)
+            .putString(KEY_SERVER_PASSWORD, password)
+            .apply()
         binding.serverUrlText.text = address
+        binding.serverEntryError.text = ""
         binding.serverEntryOverlay.visibility = android.view.View.GONE
         binding.statusOverlay.visibility = android.view.View.VISIBLE
-        startSignaling(address)
+        startSignaling(address, password)
     }
 
     private fun showServerEntry(prefill: Boolean) {
@@ -91,15 +100,17 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
         closePeerConnection()
         if (prefill) {
             binding.serverAddressInput.setText(prefs.getString(KEY_SERVER_ADDRESS, ""))
+            binding.serverPasswordInput.setText(prefs.getString(KEY_SERVER_PASSWORD, ""))
         }
+        binding.serverEntryError.text = ""
         binding.statusOverlay.visibility = android.view.View.GONE
         binding.serverEntryOverlay.visibility = android.view.View.VISIBLE
     }
 
-    private fun startSignaling(address: String) {
+    private fun startSignaling(address: String, password: String?) {
         setStatus(getString(R.string.connecting))
         val url = if (address.startsWith("http")) address else "http://$address"
-        val client = SignalingClient(url, this)
+        val client = SignalingClient(url, password, this)
         signaling = client
         client.connect()
     }
@@ -110,8 +121,19 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
         runOnUi { setStatus(getString(R.string.waiting_for_stream)) }
     }
 
-    override fun onConnectError() {
-        runOnUi { setStatus(getString(R.string.cannot_reach_server)) }
+    override fun onConnectError(message: String?) {
+        runOnUi {
+            if (message == "Incorrect password") {
+                showServerEntry(prefill = true)
+                binding.serverEntryError.text = "Incorrect password — try again"
+            } else {
+                setStatus(getString(R.string.cannot_reach_server))
+            }
+        }
+    }
+
+    override fun onJoinRejected(reason: String?) {
+        runOnUi { setStatus(reason ?: "Could not join — room already in use") }
     }
 
     override fun onDisconnected() {
@@ -281,6 +303,15 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
 
     // --- UI helpers ------------------------------------------------------------------
 
+    private fun startPulseAnimation() {
+        ObjectAnimator.ofFloat(binding.pulseDot, "alpha", 0.3f, 1f).apply {
+            duration = 700
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            start()
+        }
+    }
+
     private fun setStatus(text: String?) {
         if (text == null) {
             binding.statusOverlay.visibility = android.view.View.GONE
@@ -329,6 +360,7 @@ class MainActivity : AppCompatActivity(), SignalingClient.Listener {
 
     companion object {
         private const val KEY_SERVER_ADDRESS = "server_address"
+        private const val KEY_SERVER_PASSWORD = "server_password"
     }
 }
 
