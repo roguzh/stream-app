@@ -133,10 +133,15 @@ Both stats overlays now surface the diagnostics that matter for chasing quality 
 stream-app/
 ├── package.json
 ├── server.js               # Express + Socket.io signaling server
-└── public/
-    ├── sender.html          # Opened on Mac or iPhone
-    └── receiver.html        # Opened on the TV browser
+├── public/
+│   ├── sender.html          # Opened on Mac or iPhone
+│   └── receiver.html        # Opened on the TV browser (or use the native app below)
+└── android-receiver/        # Native Android TV client — see android-receiver/README.md
 ```
+
+## Native Android TV receiver
+
+Instead of opening `receiver.html` in whatever browser the Mi Box has, there's a native Android TV app in [`android-receiver/`](android-receiver/) that talks to the same signaling server unchanged. It gets hardware-accelerated decode, real fullscreen without a tap-to-fullscreen step, and audio that just plays without the browser autoplay-mute workaround. It's a separate Kotlin/Android Studio project — see [android-receiver/README.md](android-receiver/README.md) for building and sideloading it onto the Mi Box.
 
 ## Known limitations
 

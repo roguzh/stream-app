@@ -1,0 +1,10 @@
+<resources>
+    <color name="black">#000000</color>
+    <color name="background_dark">#121214</color>
+    <color name="accent_blue">#2D7EF7</color>
+    <color name="accent_green">#4CAF50</color>
+    <color name="text_primary">#EEEEEE</color>
+    <color name="text_secondary">#8FD3FF</color>
+    <color name="overlay_scrim">#B3000000</color>
+    <color name="stats_bg">#99000000</color>
+</resources>
