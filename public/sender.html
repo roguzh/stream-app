@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Sender</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #f4f4f6;
+    color: #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: #121214;
+      color: #eee;
+    }
+    #status, #stats, .card {
+      background: #1e1e22 !important;
+      color: #eee !important;
+    }
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 20px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    width: 100%;
+    max-width: 420px;
+    box-sizing: border-box;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    margin-bottom: 16px;
+  }
+
+  button {
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+
+  #startBtn {
+    background: #2d7ef7;
+    color: #fff;
+  }
+
+  #startBtn:disabled {
+    background: #9bbcf0;
+    cursor: default;
+  }
+
+  #stopBtn {
+    background: #e53935;
+    color: #fff;
+  }
+
+  #status {
+    text-align: center;
+    font-size: 1rem;
+    padding: 10px;
+    border-radius: 8px;
+    background: #eee;
+    margin-top: 12px;
+  }
+
+  #status.live {
+    color: #2e7d32;
+    font-weight: 600;
+  }
+
+  #status.error {
+    color: #c62828;
+    font-weight: 600;
+  }
+
+  #stats {
+    display: none;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    margin-top: 12px;
+    background: #eee;
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  #stats.visible {
+    display: grid;
+  }
+
+  #qr {
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  #qr img, #qr canvas {
+    background: #fff;
+    padding: 8px;
+    border-radius: 8px;
+  }
+
+  .receiver-url {
+    text-align: center;
+    font-family: monospace;
+    font-size: 0.85rem;
+    margin-top: 8px;
+    word-break: break-all;
+  }
+
+  .note {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin-top: 10px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <h1>Stream to TV</h1>
+
+  <div class="card">
+    <button id="startBtn">Start Streaming</button>
+    <button id="stopBtn" style="display:none">Stop</button>
+    <div id="status">Not connected</div>
+    <div id="stats">
+      <span id="stat-res">–</span>
+      <span id="stat-fps">–</span>
+      <span id="stat-bitrate">–</span>
+      <span id="stat-latency">–</span>
+    </div>
+    <div class="note" id="ios-note" style="display:none">On iPhone, only tab sharing is available. No audio capture.</div>
+  </div>
+
+  <div class="card">
+    <div id="qr"></div>
+    <div class="receiver-url" id="receiver-url"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const ROOM = 'stream';
+    const socket = io();
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusEl = document.getElementById('status');
+    const statsEl = document.getElementById('stats');
+    const iosNote = document.getElementById('ios-note');
+    const receiverUrlEl = document.getElementById('receiver-url');
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isIOS) {
+      iosNote.style.display = 'block';
+    }
+
+    const receiverUrl = `${window.location.protocol}//${window.location.host}/receiver`;
+    receiverUrlEl.textContent = receiverUrl;
+    new QRCode(document.getElementById('qr'), {
+      text: receiverUrl,
+      width: 160,
+      height: 160
+    });
+
+    let pc = null;
+    let stream = null;
+    let statsInterval = null;
+    let prevBytesSent = 0;
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls || '';
+    }
+
+    function resetUI() {
+      startBtn.style.display = 'block';
+      startBtn.disabled = false;
+      stopBtn.style.display = 'none';
+      statsEl.classList.remove('visible');
+    }
+
+    socket.on('connect', () => {
+      socket.emit('join', ROOM);
+    });
+
+    socket.on('connect_error', () => {
+      setStatus('Cannot reach server — is it running?', 'error');
+    });
+
+    socket.on('answer', async (answer) => {
+      if (pc) {
+        await pc.setRemoteDescription(answer);
+      }
+    });
+
+    socket.on('ice-candidate', async (candidate) => {
+      if (pc) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (e) {
+          console.warn('Error adding ICE candidate:', e);
+        }
+      }
+    });
+
+    socket.on('peer-disconnected', () => {
+      if (pc) {
+        setStatus('Receiver disconnected — waiting…', 'error');
+      }
+    });
+
+    function preferH264(sdp) {
+      const lines = sdp.split('\r\n');
+      const h264Payloads = [];
+      lines.forEach(line => {
+        const match = line.match(/^a=rtpmap:(\d+) H264\/90000/);
+        if (match) h264Payloads.push(match[1]);
+      });
+      if (h264Payloads.length === 0) return sdp;
+      return lines.map(line => {
+        if (!line.startsWith('m=video')) return line;
+        const parts = line.split(' ');
+        const header = parts.slice(0, 3);
+        const payloads = parts.slice(3);
+        const reordered = [
+          ...h264Payloads,
+          ...payloads.filter(p => !h264Payloads.includes(p))
+        ];
+        return [...header, ...reordered].join(' ');
+      }).join('\r\n');
+    }
+
+    async function applyHighQualityParams(pc) {
+      const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (!videoSender) return;
+      const params = videoSender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      params.encodings[0].maxBitrate = 8_000_000;
+      params.encodings[0].maxFramerate = 60;
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].priority = 'high';
+      try {
+        await videoSender.setParameters(params);
+        console.log('High quality params applied');
+      } catch (e) {
+        console.warn('Could not set encoding params:', e);
+      }
+    }
+
+    async function startStreaming() {
+      startBtn.disabled = true;
+      setStatus('Choose what to share…');
+
+      const constraints = {
+        video: {
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 60, max: 60 },
+          cursor: 'always'
+        },
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: 48000,
+          channelCount: 2
+        }
+      };
+
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+      } catch (e) {
+        startBtn.disabled = false;
+        if (e.name === 'NotAllowedError') {
+          setStatus('Permission denied — please allow screen sharing', 'error');
+        } else if (e.name === 'AbortError') {
+          setStatus('Not connected');
+        } else {
+          setStatus(`Error: ${e.message}`, 'error');
+        }
+        return;
+      }
+
+      setStatus('Connecting…');
+      startBtn.style.display = 'none';
+      stopBtn.style.display = 'block';
+
+      pc = new RTCPeerConnection({ iceServers: [] });
+
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
+
+      stream.getVideoTracks()[0].onended = () => stopStreaming();
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', event.candidate);
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          setStatus('● Live', 'live');
+          statsEl.classList.add('visible');
+          applyHighQualityParams(pc);
+          startStatsPolling();
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          setStatus('Connection lost', 'error');
+        }
+      };
+
+      const offer = await pc.createOffer();
+      offer.sdp = preferH264(offer.sdp);
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', offer);
+
+      const { width, height } = stream.getVideoTracks()[0].getSettings();
+      document.getElementById('stat-res').textContent = `${width}×${height}`;
+    }
+
+    function stopStreaming() {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      clearInterval(statsInterval);
+      setStatus('Stream ended');
+      resetUI();
+    }
+
+    function startStatsPolling() {
+      clearInterval(statsInterval);
+      prevBytesSent = 0;
+      statsInterval = setInterval(pollStats, 1000);
+    }
+
+    async function pollStats() {
+      if (!pc) return;
+      const stats = await pc.getStats();
+      let bytesSent = 0, framesPerSecond = 0;
+      stats.forEach(report => {
+        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+          bytesSent = report.bytesSent;
+          framesPerSecond = report.framesPerSecond || 0;
+        }
+      });
+      const bitrateMbps = ((bytesSent - prevBytesSent) * 8 / 1_000_000).toFixed(1);
+      prevBytesSent = bytesSent;
+      document.getElementById('stat-bitrate').textContent = `${bitrateMbps} Mbps`;
+      document.getElementById('stat-fps').textContent = `${Math.round(framesPerSecond)} fps`;
+    }
+
+    startBtn.addEventListener('click', startStreaming);
+    stopBtn.addEventListener('click', stopStreaming);
+  </script>
+</body>
+</html>

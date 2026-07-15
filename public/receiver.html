@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Receiver</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+
+  #video {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    object-fit: contain;
+    background: #000;
+    z-index: 1;
+  }
+
+  #status {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #eee;
+    text-align: center;
+    gap: 16px;
+    transition: opacity 0.4s ease;
+    padding: 0 5%;
+    box-sizing: border-box;
+    z-index: 5;
+  }
+
+  #status .dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #4caf50;
+    animation: pulse 1.4s infinite ease-in-out;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.1); }
+  }
+
+  #status .url {
+    font-family: monospace;
+    font-size: 1rem;
+    color: #8fd3ff;
+  }
+
+  #fullscreen-btn {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    border: none;
+    font-size: 1.5rem;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 20;
+  }
+
+  #stats {
+    position: fixed;
+    top: 5%;
+    right: 5%;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-family: monospace;
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    line-height: 1.6;
+    white-space: pre;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #stats.visible {
+    opacity: 1;
+  }
+</style>
+</head>
+<body>
+  <div id="status">
+    <div class="dot"></div>
+    <div id="status-text">Waiting for stream…</div>
+    <div class="url" id="status-url"></div>
+  </div>
+  <video id="video" autoplay playsinline muted></video>
+  <button id="fullscreen-btn">Tap to go fullscreen</button>
+  <div id="stats"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const ROOM = 'stream';
+    const socket = io();
+    const video = document.getElementById('video');
+    const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const statusUrl = document.getElementById('status-url');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const statsEl = document.getElementById('stats');
+
+    statusUrl.textContent = window.location.protocol + '//' + window.location.host;
+
+    let pc = null;
+    let statsInterval = null;
+    let statsVisible = false;
+    let hideTimeout = null;
+    let prevFrames = 0;
+    let prevFrameTime = 0;
+    let reconnecting = false;
+
+    function createPeerConnection() {
+      pc = new RTCPeerConnection({ iceServers: [] });
+
+      pc.ontrack = (event) => {
+        video.srcObject = event.streams[0];
+        setStatus('connected');
+        attemptFullscreen();
+        scheduleHideStatus();
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', event.candidate);
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connecting') {
+          setStatus('connecting');
+        } else if (pc.connectionState === 'connected') {
+          setStatus('connected');
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          handleDisconnect();
+        }
+      };
+    }
+
+    function setStatus(state) {
+      if (state === 'waiting') {
+        statusText.textContent = 'Waiting for stream…';
+        statusEl.style.opacity = '1';
+        statusEl.style.pointerEvents = 'auto';
+      } else if (state === 'connecting') {
+        statusText.textContent = 'Connecting…';
+        statusEl.style.opacity = '1';
+        statusEl.style.pointerEvents = 'auto';
+      } else if (state === 'connected') {
+        statusText.textContent = '';
+      } else if (state === 'disconnected') {
+        statusText.textContent = 'Stream ended — reconnecting…';
+        statusEl.style.opacity = '1';
+        statusEl.style.pointerEvents = 'auto';
+      }
+    }
+
+    function scheduleHideStatus() {
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        statusEl.style.opacity = '0';
+        statusEl.style.pointerEvents = 'none';
+      }, 3000);
+    }
+
+    function attemptFullscreen() {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {
+          fullscreenBtn.style.display = 'flex';
+        });
+      }
+    }
+
+    fullscreenBtn.addEventListener('click', () => {
+      document.documentElement.requestFullscreen().catch(() => {});
+      fullscreenBtn.style.display = 'none';
+    });
+
+    function handleDisconnect() {
+      if (reconnecting) return;
+      reconnecting = true;
+      setStatus('disconnected');
+      clearInterval(statsInterval);
+      setTimeout(() => {
+        window.location.reload();
+      }, 3000);
+    }
+
+    function joinRoom() {
+      socket.emit('join', ROOM);
+    }
+
+    socket.on('connect', () => {
+      joinRoom();
+      setStatus('waiting');
+    });
+
+    socket.on('connect_error', () => {
+      statusText.textContent = 'Cannot reach server — is it running?';
+      statusEl.style.opacity = '1';
+    });
+
+    socket.on('offer', async (offer) => {
+      setStatus('connecting');
+      if (!pc) createPeerConnection();
+      await pc.setRemoteDescription(offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', answer);
+      startStatsPolling();
+    });
+
+    socket.on('ice-candidate', async (candidate) => {
+      if (pc) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (e) {
+          console.warn('Error adding ICE candidate:', e);
+        }
+      }
+    });
+
+    socket.on('peer-disconnected', () => {
+      handleDisconnect();
+    });
+
+    function startStatsPolling() {
+      clearInterval(statsInterval);
+      prevFrames = 0;
+      prevFrameTime = performance.now();
+      statsInterval = setInterval(updateStats, 1000);
+    }
+
+    async function updateStats() {
+      if (!pc) return;
+
+      const width = video.videoWidth || 0;
+      const height = video.videoHeight || 0;
+
+      let fps = 0;
+      if (video.getVideoPlaybackQuality) {
+        const quality = video.getVideoPlaybackQuality();
+        const now = performance.now();
+        const frameDelta = quality.totalVideoFrames - prevFrames;
+        const timeDelta = (now - prevFrameTime) / 1000;
+        fps = timeDelta > 0 ? Math.round(frameDelta / timeDelta) : 0;
+        prevFrames = quality.totalVideoFrames;
+        prevFrameTime = now;
+      }
+
+      let bufferHealth = 0;
+      if (video.buffered.length > 0) {
+        bufferHealth = (video.buffered.end(video.buffered.length - 1) - video.currentTime).toFixed(2);
+      }
+
+      const connectionState = pc.connectionState;
+
+      statsEl.textContent =
+        `${width}x${height}\n` +
+        `${fps} fps\n` +
+        `buffer ${bufferHealth}s\n` +
+        `${connectionState}`;
+    }
+
+    document.addEventListener('keydown', () => {
+      statsVisible = !statsVisible;
+      statsEl.classList.toggle('visible', statsVisible);
+    });
+
+    createPeerConnection();
+  </script>
+</body>
+</html>
