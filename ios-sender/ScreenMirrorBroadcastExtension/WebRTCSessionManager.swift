@@ -55,15 +55,18 @@ final class WebRTCSessionManager: NSObject {
         peerConnection = pc
 
         let source = factory.videoSource()
-        // Closest iOS equivalent to the web sender's contentHint = 'motion': hints
-        // the encoder to favor temporal smoothness over per-frame spatial detail.
-        source.isScreencast = true
+        // No iOS equivalent to the web sender's contentHint = 'motion' — this
+        // SDK's RTCVideoSource/RTCMediaSource expose no such property (verified
+        // against the actual header; there's no isScreencast or similar here).
+        // Quality-under-motion has to come from degradationPreference/bitrate
+        // tuning on the sender instead, same as the fallback path the browser
+        // sender already relies on when contentHint itself doesn't help enough.
         videoSource = source
         videoCapturer = RTCVideoCapturer(delegate: source)
 
         let videoTrack = factory.videoTrack(with: source, trackId: "video0")
         if let videoTransceiver = pc.addTransceiver(with: videoTrack, init: sendOnlyInit()) {
-            H264CodecFactory.applyCodecPreference(to: videoTransceiver)
+            H264CodecFactory.applyCodecPreference(to: videoTransceiver, factory: factory)
         }
 
         // Audio data delivery bypasses the normal source/capturer path entirely —

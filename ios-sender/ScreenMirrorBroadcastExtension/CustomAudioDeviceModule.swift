@@ -1,37 +1,47 @@
 import AVFoundation
 import StreamWebRTC
 
-// HIGHEST-RISK FILE IN THIS PROJECT — see Risk #2 in the project plan
-// (~/.claude/plans/moonlit-churning-mccarthy.md). WebRTC's iOS SDK has no direct
-// "push a CMSampleBuffer" ingestion point for audio the way video has
-// RTCCVPixelBuffer. The supported mechanism is implementing the RTCAudioDevice
-// protocol and delivering PCM through its delegate, bypassing the default
+// Custom RTCAudioDevice implementation: WebRTC's iOS SDK has no direct "push a
+// CMSampleBuffer" ingestion point for audio the way video has RTCCVPixelBuffer.
+// The supported mechanism is implementing RTCAudioDevice and delivering PCM
+// through the delegate's deliverRecordedData block, bypassing the default
 // AVAudioSession-based ADM entirely — which we don't want anyway, since a
-// Broadcast Extension can't freely drive AVAudioSession, and ReplayKit is already
-// handing us sample buffers for both app and mic audio.
+// Broadcast Extension can't freely drive AVAudioSession, and ReplayKit is
+// already handing us sample buffers for both app and mic audio.
 //
-// VERIFY BEFORE RELYING ON THIS FILE: Cmd-click into `RTCAudioDevice` and
-// `RTCAudioDeviceDelegate` in Xcode and confirm every method name/signature below
-// actually matches what StreamWebRTC 148.0.0 declares. This is the single most
-// version-sensitive corner of the iOS WebRTC SDK — the shape here (lifecycle
-// methods, AudioBufferList-based delivery mirroring a CoreAudio render callback)
-// matches the general pattern real RTCAudioDevice implementations use, but exact
-// selectors can differ by SDK version. Build and validate this file in isolation —
-// confirm a receiver can actually hear custom-injected PCM — before wiring up the
-// rest of the capture pipeline on the assumption it works as written.
+// Every member here is verified against the actual RTCAudioDevice.h /
+// RTCAudioDeviceDelegate protocol shipped in StreamWebRTC 148.0.0 (read
+// directly from the built framework header, not guessed).
 final class CustomAudioDeviceModule: NSObject, RTCAudioDevice {
 
     private weak var audioDelegate: RTCAudioDeviceDelegate?
-    private(set) var isInitialized = false
-    private var isRecording = false
 
+    // MARK: - Reported format
     // WebRTC's ADM expects a fixed format and does not resample for you — mixed
     // app+mic PCM handed to deliverCapturedPCM must already be in this format.
-    let captureSampleRate: Double = 48_000
-    let captureChannels: UInt32 = 2
+    let deviceInputSampleRate: Double = 48_000
+    let inputIOBufferDuration: TimeInterval = 0.02
+    let inputNumberOfChannels: Int = 2
+    let inputLatency: TimeInterval = 0.02
 
-    var inputIsAvailable: Bool { true }
-    var outputIsAvailable: Bool { false } // No local playout needed — the extension has no speaker output.
+    // No real playout device in the extension (no speaker output), but the
+    // protocol still requires these to be reported — mirror the input format.
+    let deviceOutputSampleRate: Double = 48_000
+    let outputIOBufferDuration: TimeInterval = 0.02
+    let outputNumberOfChannels: Int = 2
+    let outputLatency: TimeInterval = 0.02
+
+    // MARK: - State
+
+    private(set) var isInitialized = false
+    private(set) var isPlayoutInitialized = false
+    private(set) var isPlaying = false
+    private(set) var isRecordingInitialized = false
+    private(set) var isRecording = false
+
+    // Running sample-clock position for AudioTimeStamp.mSampleTime — a monotonic
+    // count of frames delivered so far, not wall-clock time.
+    private var recordedSampleTime: Float64 = 0
 
     // MARK: - RTCAudioDevice lifecycle
 
@@ -47,28 +57,43 @@ final class CustomAudioDeviceModule: NSObject, RTCAudioDevice {
         return true
     }
 
-    func initializeCapture() -> Bool { true }
+    func initializePlayout() -> Bool {
+        isPlayoutInitialized = true
+        return true
+    }
 
-    func startCapture() -> Bool {
+    func startPlayout() -> Bool {
+        // No local playout in the extension — nothing to actually start, but we
+        // must still report success/state truthfully per the protocol contract.
+        isPlaying = true
+        return true
+    }
+
+    func stopPlayout() -> Bool {
+        isPlaying = false
+        return true
+    }
+
+    func initializeRecording() -> Bool {
+        isRecordingInitialized = true
+        return true
+    }
+
+    func startRecording() -> Bool {
         isRecording = true
         return true
     }
 
-    func stopCapture() -> Bool {
+    func stopRecording() -> Bool {
         isRecording = false
         return true
     }
 
-    // No real playout device in the extension — stub these out as no-ops.
-    func initializePlayout() -> Bool { true }
-    func startPlayout() -> Bool { false }
-    func stopPlayout() -> Bool { true }
-
     // MARK: - Feeding audio in
 
     /// Call from SampleHandler.processSampleBuffer for both .audioApp and .audioMic
-    /// sample types, after mixing them into one PCM stream at captureSampleRate/
-    /// captureChannels (resample upstream if ReplayKit hands you a different format).
+    /// sample types, after mixing them into one PCM stream at deviceInputSampleRate/
+    /// inputNumberOfChannels (resample upstream if ReplayKit hands you a different format).
     func deliverCapturedPCM(sampleBuffer: CMSampleBuffer) {
         guard isRecording, let audioDelegate else { return }
 
@@ -89,10 +114,27 @@ final class CustomAudioDeviceModule: NSObject, RTCAudioDevice {
             return
         }
 
-        let timestampSeconds = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        let frameCount = UInt32(CMSampleBufferGetNumSamples(sampleBuffer))
 
-        // VERIFY: exact delegate selector — see file header. This is a best-effort
-        // name based on the standard RTCAudioDevice integration pattern.
-        audioDelegate.deliverRecordedData?(audioBufferList, timestamp: timestampSeconds)
+        var actionFlags = AudioUnitRenderActionFlags()
+        var timeStamp = AudioTimeStamp()
+        timeStamp.mSampleTime = recordedSampleTime
+        timeStamp.mFlags = .sampleTimeValid
+        recordedSampleTime += Float64(frameCount)
+
+        withUnsafePointer(to: audioBufferList) { inputDataPtr in
+            _ = audioDelegate.deliverRecordedData(
+                &actionFlags,
+                &timeStamp,
+                1, // inputBusNumber — 1 is the conventional Remote I/O input bus.
+                frameCount,
+                inputDataPtr,
+                nil, // renderContext — unused in the "push" (pre-filled inputData) path.
+                nil  // renderBlock — nil because we're pushing inputData directly,
+                     // not pulling via a render callback (see deliverRecordedData's
+                     // doc comment in RTCAudioDevice.h: either inputData or
+                     // renderBlock must be provided; we provide inputData).
+            )
+        }
     }
 }

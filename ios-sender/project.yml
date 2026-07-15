@@ -85,5 +85,10 @@ schemes:
         ScreenMirrorBroadcastExtension: all
     run:
       config: Debug
+      # Without this, XcodeGen defaults the scheme's Launch Action to whichever
+      # target it picks first — which came out as the .appex, not the .app, and
+      # made Run try to launch the extension directly (hence the "choose a host
+      # app" dialog). Explicitly point it at the actual app.
+      executable: ScreenMirrorSender
     archive:
       config: Release

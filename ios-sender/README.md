@@ -2,14 +2,15 @@
 
 Unlike the rest of this project, this app doesn't connect to `server.js` at all. It's a native iOS app that captures your iPhone's full screen and hosts itself directly on your LAN — no central signaling server required. Start mirroring, scan the QR code it shows on a receiver (currently `public/receiver.html`, via its **Pair with sender** button), and video/audio flow peer-to-peer.
 
-**This is the least-tested code in the whole project.** I wrote it with zero access to Xcode, an iOS simulator, an Apple Developer account, or a physical iPhone — none of it has compiled, let alone run. Several files contain `// VERIFY:` comments marking API calls whose exact names/signatures I'm not fully certain of (this corner of the WebRTC iOS SDK is genuinely under-documented). Treat your first Xcode build as the actual first test of this code, not a formality. See [`~/.claude/plans/moonlit-churning-mccarthy.md`](../.claude/plans/moonlit-churning-mccarthy.md) *(if still present on your machine)* for the full architecture writeup and risk list this was built from.
+**Compiles clean, but has never run.** This was originally written with zero access to Xcode, and several `RTCAudioDevice`/`RTCRtpTransceiver`/`RTCPeerConnectionFactory` API calls turned out to be wrong on the first real build — wrong method names, wrong types passed to `sorted`, an `isScreencast` property that doesn't exist in this SDK version, and a `setCodecPreferences` overload with a genuinely strange bridged signature. All of that has since been fixed and verified against the actual StreamWebRTC 148.0.0 headers (`xcodebuild ... CODE_SIGNING_ALLOWED=NO` succeeds with zero errors and zero warnings) — see the fix commit for the exact diffs and the reasoning behind each one. What's still unverified is runtime behavior: actual screen capture, actual PCM delivery through `CustomAudioDeviceModule`, actual negotiation with a real receiver. Treat running it on a device as the next real test, not a formality — a clean compile rules out typos and wrong signatures, not wrong runtime assumptions.
 
 ## What's verified vs. not
 
 | Piece | Status |
 |---|---|
 | Wire protocol (`GET /offer`, `POST /answer`, CORS) | **Verified** — tested end-to-end against a real browser `RTCPeerConnection` using a mock Node server standing in for the iOS listener. `public/receiver.html`'s pairing-mode code is confirmed correct. |
-| Everything inside `ScreenMirrorBroadcastExtension/` and `ScreenMirrorSender/` (Swift/Xcode/ReplayKit/WebRTC) | **Not verified at all.** No compile, no run. |
+| Everything inside `ScreenMirrorBroadcastExtension/` and `ScreenMirrorSender/` compiles | **Verified** — `xcodebuild` succeeds with zero errors/warnings against the real StreamWebRTC 148.0.0 API. |
+| Actual runtime behavior (screen capture, audio delivery, real negotiation) | **Not verified.** No run on a physical device yet — that's the next test. |
 
 ## 1. Install prerequisites
 
@@ -54,9 +55,12 @@ The App Group (`group.com.streamapp.screenmirror`) should register itself automa
 
 ## If something breaks in Xcode
 
-Start with `CustomAudioDeviceModule.swift` and `WebRTCSessionManager.swift` — those have the most `// VERIFY:` comments and are the most likely places a StreamWebRTC API name doesn't match exactly what I wrote. Cmd-click into the type/protocol Xcode is complaining about and check the actual declaration; the fix is almost always a renamed method or a slightly different parameter list, not a wrong overall approach.
+The build itself is verified clean (`xcodebuild ... CODE_SIGNING_ALLOWED=NO`, zero errors/warnings against StreamWebRTC 148.0.0). If your build still fails, it's most likely one of:
+- **Signing** — "requires a development team" means the Team dropdown under Signing & Capabilities isn't set on one or both targets (`ScreenMirrorSender` and `ScreenMirrorBroadcastExtension` need it set independently).
+- **Running the wrong scheme** — if Run shows a "choose an app to run" dialog with unrelated options (Siri, Today, etc.), the extension's own launch action got selected instead of the app's. The `ScreenMirrorSender` scheme should always be what's selected in the toolbar.
+- **A StreamWebRTC version drift** — if a future dependency bump changes an API shape again, the fix pattern that worked here was: read the actual header in `~/Library/Developer/Xcode/DerivedData/.../StreamWebRTC.xcframework/.../Headers/` directly (`RTCAudioDevice.h`, `RTCRtpTransceiver.h`, `RTCPeerConnectionFactory.h`, `RTCRtpCodecCapability.h` are the ones this code depends on most), not the docs — this SDK's Swift bridging has real surprises (e.g. `setCodecPreferences` has a bridged signature that looks like a compiler bug but isn't).
 
-Priority order for debugging, per the plan's risk list:
+Priority order once it's running on a device, per the original risk list:
 1. **Audio (`CustomAudioDeviceModule.swift`)** — get this working in isolation first, independent of the rest of the pipeline. Confirm a receiver can hear anything before worrying about video.
 2. **Broadcast Extension memory** — if the extension crashes/gets killed shortly after starting, this is almost certainly it (~50MB budget, undocumented and shifting across iOS versions). Profile with Instruments on your device.
 3. Everything else in the risk list is in `ScreenMirrorBroadcastExtension/*.swift`'s file-header comments.

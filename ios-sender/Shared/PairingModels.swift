@@ -2,7 +2,7 @@ import Foundation
 
 // Written by the extension to the App Group container once the offer + non-trickle
 // ICE gathering are ready; read by the main app to render the QR/manual-entry code.
-struct PairingSession: Codable {
+struct PairingSession: Codable, Equatable {
     let sessionId: String
     let offerSdp: String
     let ip: String
