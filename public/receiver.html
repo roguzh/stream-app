@@ -295,7 +295,10 @@
       pc.ontrack = (event) => {
         video.srcObject = event.streams[0];
         setStatus('connected');
-        attemptFullscreen();
+        // No automatic requestFullscreen() call — it was firing on every
+        // connection, which got in the way during testing/debugging. The
+        // fullscreen button is still available for manual opt-in.
+        fullscreenBtn.style.display = 'flex';
         attemptUnmutedPlayback();
         scheduleHideStatus();
 
@@ -347,14 +350,6 @@
         statusEl.style.opacity = '0';
         statusEl.style.pointerEvents = 'none';
       }, 3000);
-    }
-
-    function attemptFullscreen() {
-      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen().catch(() => {
-          fullscreenBtn.style.display = 'flex';
-        });
-      }
     }
 
     fullscreenBtn.addEventListener('click', () => {

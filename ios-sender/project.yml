@@ -22,6 +22,10 @@ targets:
       path: Generated/ScreenMirrorSender-Info.plist
       properties:
         CFBundleDisplayName: "Screen Mirror"
+        # XcodeGen's default Info.plist template hardcodes a literal "1" here
+        # rather than the $(CURRENT_PROJECT_VERSION) placeholder — setting the
+        # build setting alone does nothing without this explicit override.
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -43,6 +47,14 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: D8QV4PC9XM
+        # CFBundleVersion was static ("1") on every build. iOS's broadcast-extension
+        # registry appears to cache the extension by bundle ID + version, so a
+        # reinstalled app with an unchanged version can keep running the OLD
+        # extension binary even though the containing app itself is genuinely
+        # fresh — confirmed by two separate fixes (button init frame, diagnostic
+        # logging) neither taking effect despite successful reinstalls + a device
+        # restart. Bump this on every real device test from now on.
+        CURRENT_PROJECT_VERSION: 1784228530
     dependencies:
       - target: ScreenMirrorBroadcastExtension
         embed: true
@@ -59,6 +71,8 @@ targets:
       path: Generated/ScreenMirrorBroadcastExtension-Info.plist
       properties:
         CFBundleDisplayName: "Screen Mirror"
+        # See ScreenMirrorSender target's matching comment.
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.broadcast-services-upload
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
@@ -85,6 +99,8 @@ targets:
         SKIP_INSTALL: "YES"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: D8QV4PC9XM
+        # See ScreenMirrorSender target's matching comment — must bump together.
+        CURRENT_PROJECT_VERSION: 1784228530
     dependencies:
       - package: StreamWebRTC
 
