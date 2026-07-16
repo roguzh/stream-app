@@ -41,6 +41,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: D8QV4PC9XM
     dependencies:
       - target: ScreenMirrorBroadcastExtension
         embed: true
@@ -76,6 +77,7 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         SKIP_INSTALL: "YES"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: D8QV4PC9XM
     dependencies:
       - package: StreamWebRTC
 
