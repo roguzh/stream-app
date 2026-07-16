@@ -21,6 +21,18 @@ app.get('/receiver', (req, res) => {
   res.sendFile(__dirname + '/public/receiver.html');
 });
 
+// Temporary debugging aid for ios-sender: devicectl's remote file-transfer
+// commands proved unreliable for reading the Broadcast Extension's own
+// diagnostic file out of its App Group container, and NSLog output from an
+// extension process can't be streamed remotely at all. The extension instead
+// POSTs diagnostic lines here directly over the LAN, straight into this
+// already-running, already-trusted server's own console output.
+app.use(express.json());
+app.post('/debug-log', (req, res) => {
+  console.log(`[DEBUG-LOG] ${JSON.stringify(req.body)}`);
+  res.sendStatus(200);
+});
+
 function timestamp() {
   return new Date().toISOString();
 }

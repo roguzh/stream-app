@@ -54,7 +54,7 @@ targets:
         # fresh — confirmed by two separate fixes (button init frame, diagnostic
         # logging) neither taking effect despite successful reinstalls + a device
         # restart. Bump this on every real device test from now on.
-        CURRENT_PROJECT_VERSION: 1784228530
+        CURRENT_PROJECT_VERSION: 1784233369
     dependencies:
       - target: ScreenMirrorBroadcastExtension
         embed: true
@@ -86,6 +86,12 @@ targets:
         NSMicrophoneUsageDescription: "This app does not record your microphone. iOS requires this description because the audio session used to mix system audio into the stream is configured with a category that supports microphone input."
         NSBonjourServices:
           - "_screenmirror._tcp"
+        # Needed for the temporary debug-log POST to the dev Mac's plain-HTTP
+        # server (App Transport Security blocks arbitrary HTTP by default).
+        # NSAllowsLocalNetworking is the narrow exception — LAN only, not a
+        # blanket arbitrary-loads bypass.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     entitlements:
       path: Generated/ScreenMirrorBroadcastExtension.entitlements
       properties:
@@ -100,7 +106,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: D8QV4PC9XM
         # See ScreenMirrorSender target's matching comment — must bump together.
-        CURRENT_PROJECT_VERSION: 1784228530
+        CURRENT_PROJECT_VERSION: 1784233369
     dependencies:
       - package: StreamWebRTC
 

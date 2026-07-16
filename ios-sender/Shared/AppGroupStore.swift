@@ -38,16 +38,40 @@ enum AppGroupStore {
         containerURL?.appendingPathComponent("diagnostic.log")
     }
 
+    // Primary diagnostic channel: devicectl's remote file-transfer commands proved
+    // unreliable for reading files back out of the App Group container (consistent
+    // "File paths cannot contain '..'" errors unrelated to the actual path given,
+    // even for pairing.json which we know for certain gets written successfully).
+    // POSTing straight to the dev Mac's already-running, already-trusted server is
+    // far more reliable — its console output is just directly tailable.
+    // TEMPORARY — remove once the zero-frames issue is diagnosed.
+    private static let debugLogURL = URL(string: "http://192.168.1.41:3000/debug-log")
+
     static func logDiagnostic(_ message: String) {
-        guard let url = diagnosticFileURL else { return }
-        let line = "\(Date()): \(message)\n"
-        guard let data = line.data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            handle.seekToEndOfFile()
-            handle.write(data)
-        } else {
-            try? data.write(to: url)
+        // File-based logging kept as a secondary path even though retrieval via
+        // devicectl proved unreliable — harmless to keep writing it.
+        if let url = diagnosticFileURL {
+            let line = "\(Date()): \(message)\n"
+            if let data = line.data(using: .utf8) {
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    defer { try? handle.close() }
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                } else {
+                    try? data.write(to: url)
+                }
+            }
+        }
+
+        if let debugLogURL {
+            var request = URLRequest(url: debugLogURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [
+                "message": message,
+                "timestamp": ISO8601DateFormatter().string(from: Date())
+            ])
+            URLSession.shared.dataTask(with: request).resume()
         }
     }
 
