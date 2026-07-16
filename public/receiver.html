@@ -64,23 +64,6 @@
     color: #8fd3ff;
   }
 
-  #fullscreen-btn {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0,0,0,0.75);
-    color: #fff;
-    border: none;
-    font-size: 1.5rem;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 20;
-  }
-
   #sound-btn {
     position: fixed;
     left: 5%;
@@ -237,7 +220,6 @@
     <div class="url" id="status-url"></div>
   </div>
   <video id="video" autoplay playsinline muted></video>
-  <button id="fullscreen-btn">Tap to go fullscreen</button>
   <button id="sound-btn">🔇 Tap for sound</button>
   <button id="pair-btn">Pair with sender</button>
   <div id="stats"></div>
@@ -266,7 +248,6 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('status-text');
     const statusUrl = document.getElementById('status-url');
-    const fullscreenBtn = document.getElementById('fullscreen-btn');
     const soundBtn = document.getElementById('sound-btn');
     const statsEl = document.getElementById('stats');
     const pairBtn = document.getElementById('pair-btn');
@@ -295,10 +276,10 @@
       pc.ontrack = (event) => {
         video.srcObject = event.streams[0];
         setStatus('connected');
-        // No automatic requestFullscreen() call — it was firing on every
-        // connection, which got in the way during testing/debugging. The
-        // fullscreen button is still available for manual opt-in.
-        fullscreenBtn.style.display = 'flex';
+        // No fullscreen prompt at all — it was a large blocking overlay that
+        // fired on every connection regardless of whether the user wanted it.
+        // Video just plays inline; use the browser's own fullscreen control
+        // if you actually want fullscreen.
         attemptUnmutedPlayback();
         scheduleHideStatus();
 
@@ -351,13 +332,6 @@
         statusEl.style.pointerEvents = 'none';
       }, 3000);
     }
-
-    fullscreenBtn.addEventListener('click', () => {
-      document.documentElement.requestFullscreen().catch(() => {});
-      fullscreenBtn.style.display = 'none';
-      // Any click is a user gesture — piggyback the unmute attempt on it too.
-      unmute();
-    });
 
     // The <video> starts muted so autoplay is never blocked (the browser policy that
     // blocks unmuted autoplay is why tab/system audio can look "silently dropped" —
