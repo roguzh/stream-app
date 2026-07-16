@@ -187,8 +187,18 @@ extension WebRTCSessionManager: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        // This delegate method fires synchronously on WebRTC's own signaling
+        // thread (confirmed via a device crash: SIGABRT inside this exact call
+        // chain, thread named "signaling_thread"). finishIceGathering reads
+        // peerConnection.localDescription and kicks off further work (writing
+        // to the App Group, starting the NWListener) — calling back into
+        // RTCPeerConnection and doing that work synchronously from within its
+        // own delegate callback hits an internal WebRTC reentrancy assertion.
+        // Hop off the signaling thread first.
         if newState == .complete {
-            finishIceGathering(peerConnection: peerConnection)
+            DispatchQueue.main.async { [weak self] in
+                self?.finishIceGathering(peerConnection: peerConnection)
+            }
         }
     }
 
