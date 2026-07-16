@@ -33,7 +33,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
         let now = Date()
         let pendingSession = PairingSession(
             sessionId: sessionId, offerSdp: offerSdp, ip: ip, port: 0,
-            createdAt: now, expiresAt: now.addingTimeInterval(60)
+            // Matches SignalingListener's actual timeout — kept in sync since
+            // this is metadata only right now, not enforced anywhere itself.
+            createdAt: now, expiresAt: now.addingTimeInterval(180)
         )
 
         let listener = SignalingListener(session: pendingSession)

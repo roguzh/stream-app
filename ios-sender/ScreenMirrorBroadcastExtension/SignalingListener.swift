@@ -71,7 +71,12 @@ final class SignalingListener {
             self?.stop()
         }
         timeoutWorkItem = work
-        queue.asyncAfter(deadline: .now() + 60, execute: work)
+        // 60s proved too tight in practice for manual URL entry across devices
+        // (switching to the Mac, copy/pasting a long URL) — confirmed via a real
+        // "connection refused" once the listener had already torn itself down
+        // mid-attempt. QR scanning is fast enough that this won't matter there;
+        // this mainly protects the manual-entry fallback path.
+        queue.asyncAfter(deadline: .now() + 180, execute: work)
     }
 
     private func handle(connection: NWConnection) {
