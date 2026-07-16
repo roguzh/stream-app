@@ -5,16 +5,26 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private let sessionManager = WebRTCSessionManager()
     private var signalingListener: SignalingListener?
 
+    // Diagnostic-only counters, throttled to avoid disk/CPU overhead at 30-60fps —
+    // see AppGroupStore.logDiagnostic's doc comment for why this exists.
+    private var videoFrameCount = 0
+    private var audioAppFrameCount = 0
+    private var audioMicFrameCount = 0
+
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
+        AppGroupStore.clearDiagnosticLog()
+        AppGroupStore.logDiagnostic("broadcastStarted called")
         let sessionId = UUID().uuidString
 
         sessionManager.setUp { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let sdp):
+                AppGroupStore.logDiagnostic("sessionManager.setUp succeeded, sdp length \(sdp.count)")
                 self.startSignaling(sessionId: sessionId, offerSdp: sdp)
             case .failure(let error):
                 NSLog("SampleHandler: WebRTC setup failed: \(error)")
+                AppGroupStore.logDiagnostic("sessionManager.setUp FAILED: \(error)")
                 self.finishBroadcastWithError(error)
             }
         }
@@ -54,9 +64,13 @@ final class SampleHandler: RPBroadcastSampleHandler {
         }
 
         listener.onAnswerReceived = { [weak self] payload in
+            AppGroupStore.logDiagnostic("onAnswerReceived called, sdp length \(payload.sdp.count)")
             self?.sessionManager.applyAnswer(payload) { error in
                 if let error {
                     NSLog("SampleHandler: applyAnswer failed: \(error)")
+                    AppGroupStore.logDiagnostic("applyAnswer FAILED: \(error)")
+                } else {
+                    AppGroupStore.logDiagnostic("applyAnswer succeeded")
                 }
             }
         }
@@ -88,10 +102,32 @@ final class SampleHandler: RPBroadcastSampleHandler {
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
         switch sampleBufferType {
         case .video:
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+            videoFrameCount += 1
+            if videoFrameCount == 1 {
+                AppGroupStore.logDiagnostic("first .video sample buffer received")
+            }
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                AppGroupStore.logDiagnostic("video frame \(videoFrameCount): CMSampleBufferGetImageBuffer returned nil")
+                return
+            }
+            if videoFrameCount % 60 == 1 {
+                let w = CVPixelBufferGetWidth(pixelBuffer)
+                let h = CVPixelBufferGetHeight(pixelBuffer)
+                AppGroupStore.logDiagnostic("video frame \(videoFrameCount): \(w)x\(h)")
+            }
             let timestampNs = Int64(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1_000_000_000)
             sessionManager.captureVideoFrame(pixelBuffer: pixelBuffer, timestampNs: timestampNs)
-        case .audioApp, .audioMic:
+        case .audioApp:
+            audioAppFrameCount += 1
+            if audioAppFrameCount == 1 {
+                AppGroupStore.logDiagnostic("first .audioApp sample buffer received")
+            }
+            sessionManager.captureAudioSampleBuffer(sampleBuffer)
+        case .audioMic:
+            audioMicFrameCount += 1
+            if audioMicFrameCount == 1 {
+                AppGroupStore.logDiagnostic("first .audioMic sample buffer received")
+            }
             sessionManager.captureAudioSampleBuffer(sampleBuffer)
         @unknown default:
             break

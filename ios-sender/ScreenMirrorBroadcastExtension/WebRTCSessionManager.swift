@@ -153,11 +153,20 @@ final class WebRTCSessionManager: NSObject {
 
     // MARK: - Feeding captured media (called from SampleHandler)
 
+    private var loggedFirstCapturedFrame = false
+
     func captureVideoFrame(pixelBuffer: CVPixelBuffer, timestampNs: Int64, rotation: RTCVideoRotation = ._0) {
-        guard let videoSource, let videoCapturer else { return }
+        guard let videoSource, let videoCapturer else {
+            AppGroupStore.logDiagnostic("captureVideoFrame: videoSource or videoCapturer is nil, dropping frame")
+            return
+        }
         let rtcBuffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
         let frame = RTCVideoFrame(buffer: rtcBuffer, rotation: rotation, timeStampNs: timestampNs)
         videoSource.capturer(videoCapturer, didCapture: frame)
+        if !loggedFirstCapturedFrame {
+            loggedFirstCapturedFrame = true
+            AppGroupStore.logDiagnostic("captureVideoFrame: pushed first frame to videoSource successfully")
+        }
     }
 
     func captureAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
@@ -184,7 +193,13 @@ extension WebRTCSessionManager: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        // Diagnostic only — mirrors the reentrancy hazard noted below, so hop off
+        // the signaling thread before touching AppGroupStore/file I/O.
+        DispatchQueue.main.async {
+            AppGroupStore.logDiagnostic("ICE connection state changed: \(newState.rawValue)")
+        }
+    }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
         // This delegate method fires synchronously on WebRTC's own signaling

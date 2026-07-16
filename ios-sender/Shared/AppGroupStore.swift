@@ -28,6 +28,33 @@ enum AppGroupStore {
         guard let url = pairingFileURL else { return }
         try? FileManager.default.removeItem(at: url)
     }
+
+    // Temporary diagnostic aid: NSLog output from the extension process can't be
+    // retrieved remotely (no live log-streaming path available), but files in the
+    // App Group container can be pulled via `devicectl device info files
+    // --domain-type appGroupDataContainer`. Appends a timestamped line; callers
+    // should throttle (don't call this per-frame at 30-60fps).
+    private static var diagnosticFileURL: URL? {
+        containerURL?.appendingPathComponent("diagnostic.log")
+    }
+
+    static func logDiagnostic(_ message: String) {
+        guard let url = diagnosticFileURL else { return }
+        let line = "\(Date()): \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            handle.seekToEndOfFile()
+            handle.write(data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
+    static func clearDiagnosticLog() {
+        guard let url = diagnosticFileURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
 }
 
 // Darwin notifications are the only reliable cross-process signal between the main
