@@ -9,10 +9,8 @@ struct ContentView: View {
                 .font(.largeTitle.bold())
 
             switch viewModel.state {
-            case .idle:
-                idleView
-            case .waitingForBroadcastStart, .waitingForOffer:
-                waitingView
+            case .idle, .waitingForBroadcastStart, .waitingForOffer:
+                pickerView
             case .ready(let session):
                 readyView(session: session)
             case .receiverConnected:
@@ -27,9 +25,22 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
         .foregroundStyle(.white)
+        // Arm listeners as soon as the screen appears, not tied to the picker
+        // button itself — see pickerView's doc comment for why.
+        .onAppear { viewModel.startWaiting() }
     }
 
-    private var idleView: some View {
+    // RPSystemBroadcastPickerView gives no tap or completion callback (Apple
+    // doesn't expose one), so this view must stay mounted and tappable for the
+    // entire time the user might interact with it — including the real gap
+    // between tapping it, picking "ScreenMirrorSender" in the system sheet, and
+    // tapping "Start Broadcast" there, which can take several seconds.
+    //
+    // An earlier version hid this button behind a waiting-state view swap
+    // triggered by the button's own onAppear — which fires the instant the view
+    // *renders*, not when it's *tapped* — so the button vanished before the user
+    // ever got a chance to tap it, showing only a permanent "waiting" spinner.
+    private var pickerView: some View {
         VStack(spacing: 16) {
             Text("Tap below, then choose \"ScreenMirrorSender\" from the system picker to start mirroring your screen.")
                 .multilineTextAlignment(.center)
@@ -37,15 +48,13 @@ struct ContentView: View {
 
             BroadcastPickerView()
                 .frame(width: 60, height: 60)
-                .onAppear { viewModel.startWaiting() }
-        }
-    }
 
-    private var waitingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .tint(.white)
-            Text("Waiting for broadcast to start…")
+            if case .waitingForBroadcastStart = viewModel.state {
+                ProgressView()
+                    .tint(.white)
+                Text("Waiting for broadcast to start…")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

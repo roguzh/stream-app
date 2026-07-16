@@ -58,6 +58,11 @@ final class PairingViewModel: ObservableObject {
         pickerTapTimeoutTimer?.invalidate()
     }
 
+    // Called after a picker-interaction timeout, and from the "Dismiss"/"Try
+    // Again"/"Start Again" buttons. Re-arms listeners immediately rather than
+    // leaving the app idle-but-deaf — without this, the app would stop
+    // listening for a real broadcast start after the very first timeout or
+    // dismiss, even though the picker button remains visible and tappable.
     func reset() {
         pollingTimer?.invalidate()
         pollingTimer = nil
@@ -66,6 +71,6 @@ final class PairingViewModel: ObservableObject {
         darwinTokens.forEach { DarwinNotifications.stopObserving($0) }
         darwinTokens = []
         AppGroupStore.clearPairingSession()
-        state = .idle
+        startWaiting()
     }
 }
