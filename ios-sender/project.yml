@@ -28,6 +28,7 @@ targets:
         NSLocalNetworkUsageDescription: "Used to advertise this device on your local network so a receiver can find and pair with it."
         NSBonjourServices:
           - "_screenmirror._tcp"
+        NSMicrophoneUsageDescription: "This app does not record your microphone. iOS requires this description because the audio session used to mix system audio into the stream is configured with a category that supports microphone input."
         ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: Generated/ScreenMirrorSender.entitlements
@@ -63,6 +64,12 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
           RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
         NSLocalNetworkUsageDescription: "Used to advertise this device on your local network so a receiver can find and pair with it."
+        # Required by iOS even though the mic picker toggle is off (showsMicrophoneButton
+        # = false) and no mic audio is actually captured — confirmed via a device crash
+        # (TCC namespace, "attempted to access privacy-sensitive data without a usage
+        # description... NSMicrophoneUsageDescription"). The custom audio device's
+        # AVAudioSession category configuration alone triggers this check.
+        NSMicrophoneUsageDescription: "This app does not record your microphone. iOS requires this description because the audio session used to mix system audio into the stream is configured with a category that supports microphone input."
         NSBonjourServices:
           - "_screenmirror._tcp"
     entitlements:
