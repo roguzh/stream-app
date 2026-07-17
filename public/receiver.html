@@ -658,6 +658,30 @@
       });
     }
 
+    // Macs commonly have several virtual/secondary network interfaces active
+    // (Thunderbolt/Internet-Sharing bridge, link-local Auto-IP, random ULA IPv6,
+    // VPN tunnels) that WebRTC happily gathers host candidates from alongside
+    // the real Wi-Fi one. None of those can actually reach a phone on the real
+    // LAN, but ICE doesn't know that in advance — it can initially connect via
+    // a bad pair (or renominate onto one) and only fail once it actually tries
+    // to move data, which looks exactly like "connects fine, then dies a bit
+    // later." Since we always know the sender's real LAN IP (it's literally
+    // what was typed/scanned to connect), keep only our own candidates that
+    // share its /24 — anything else couldn't route to the sender anyway.
+    function filterCandidatesToSubnet(sdp, targetIp) {
+      const prefix = targetIp.split('.').slice(0, 3).join('.') + '.';
+      const filtered = sdp.split('\r\n').filter(line => {
+        if (!line.startsWith('a=candidate:')) return true;
+        const ip = line.split(' ')[4];
+        return ip && ip.startsWith(prefix);
+      });
+      // Safety net: if this would strip every candidate (e.g. targetIp wasn't a
+      // plain IPv4 literal), fall back to the unfiltered SDP rather than send an
+      // answer with no candidates at all.
+      const keptAny = filtered.some(line => line.startsWith('a=candidate:'));
+      return keptAny ? filtered.join('\r\n') : sdp;
+    }
+
     async function connectViaPairing(offerUrl) {
       setStatus('connecting');
       reconnecting = false;
@@ -670,9 +694,11 @@
 
       // Remember the address regardless of entry point (manual fields or QR
       // scan) so future manual connects only need the short code retyped.
+      let senderHostname = null;
       try {
         const parsed = new URL(offerUrl);
         localStorage.setItem(STORAGE_SENDER_ADDRESS, parsed.host);
+        senderHostname = parsed.hostname;
       } catch (e) {}
 
       try {
@@ -689,11 +715,16 @@
         // local ICE gathering and embed everything in the single answer we send.
         await waitForIceGatheringComplete(pc);
 
+        let answerSdp = pc.localDescription.sdp;
+        if (senderHostname && /^\d+\.\d+\.\d+\.\d+$/.test(senderHostname)) {
+          answerSdp = filterCandidatesToSubnet(answerSdp, senderHostname);
+        }
+
         const answerUrl = offerUrl.replace('/offer', '/answer');
         const answerResp = await fetch(answerUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp })
+          body: JSON.stringify({ type: 'answer', sdp: answerSdp })
         });
         if (!answerResp.ok) throw new Error(`Sender rejected answer (${answerResp.status})`);
 
