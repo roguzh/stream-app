@@ -174,7 +174,7 @@
     width: min(420px, 90vw);
   }
 
-  #pair-input {
+  #pair-address-input, #pair-code-input {
     width: 100%;
     min-height: 44px;
     font-size: 1rem;
@@ -184,6 +184,29 @@
     box-sizing: border-box;
     background: #1e1e22;
     color: #eee;
+    font-family: monospace;
+  }
+
+  #pair-address-label, #pair-code-label {
+    display: block;
+    font-size: 0.8rem;
+    color: #999;
+    margin: 12px 0 4px;
+    text-align: left;
+  }
+
+  #pair-address-label {
+    margin-top: 0;
+  }
+
+  /* The code is the only thing that actually changes each session — make it the
+     visually dominant field so it's obvious that's what needs retyping. */
+  #pair-code-input {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-align: center;
+    text-transform: uppercase;
   }
 
   #pair-error {
@@ -232,7 +255,10 @@
     <video id="pair-video" muted playsinline></video>
     <button id="pair-scan-btn" style="display:none">Scan QR code</button>
     <div id="pair-manual">
-      <input type="text" id="pair-input" placeholder="http://192.168.1.x:PORT/offer?sid=..." />
+      <label id="pair-address-label" for="pair-address-input">Sender address (remembered after first connect)</label>
+      <input type="text" id="pair-address-input" placeholder="192.168.1.x:8990" autocapitalize="off" autocorrect="off" />
+      <label id="pair-code-label" for="pair-code-input">Code</label>
+      <input type="text" id="pair-code-input" placeholder="XXXXXX" maxlength="6" autocapitalize="characters" autocorrect="off" />
       <div id="pair-error"></div>
       <button id="pair-connect-btn">Connect</button>
     </div>
@@ -254,7 +280,8 @@
     const pairOverlay = document.getElementById('pair-overlay');
     const pairVideo = document.getElementById('pair-video');
     const pairScanBtn = document.getElementById('pair-scan-btn');
-    const pairInput = document.getElementById('pair-input');
+    const pairAddressInput = document.getElementById('pair-address-input');
+    const pairCodeInput = document.getElementById('pair-code-input');
     const pairError = document.getElementById('pair-error');
     const pairConnectBtn = document.getElementById('pair-connect-btn');
     const pairCloseBtn = document.getElementById('pair-close-btn');
@@ -483,10 +510,18 @@
     let pairStream = null;
     let barcodeDetector = null;
 
+    const STORAGE_SENDER_ADDRESS = 'stream_app_sender_address';
+
     function openPairOverlay() {
       pairOverlay.classList.add('visible');
       pairError.textContent = '';
-      pairInput.focus();
+      try {
+        const rememberedAddress = localStorage.getItem(STORAGE_SENDER_ADDRESS);
+        if (rememberedAddress) pairAddressInput.value = rememberedAddress;
+      } catch (e) {}
+      // The address is usually already filled in from last time — the code is
+      // the thing that actually needs typing, so put focus there instead.
+      pairCodeInput.focus();
       if ('BarcodeDetector' in window) {
         pairScanBtn.style.display = 'inline-block';
       }
@@ -547,14 +582,29 @@
       requestAnimationFrame(scanLoop);
     }
 
+    function buildOfferUrl(address, code) {
+      let addr = address.trim().replace(/^https?:\/\//, '');
+      addr = addr.split('/')[0]; // drop any path/query if the whole URL got pasted in here
+      return `http://${addr}/offer?sid=${code.trim().toUpperCase()}`;
+    }
+
     pairConnectBtn.addEventListener('click', () => {
-      const url = pairInput.value.trim();
-      if (!url) return;
+      const address = pairAddressInput.value.trim();
+      const code = pairCodeInput.value.trim();
+      if (!address || !code) {
+        pairError.textContent = 'Enter both the sender address and the code.';
+        return;
+      }
+      try { localStorage.setItem(STORAGE_SENDER_ADDRESS, address); } catch (e) {}
       closePairOverlay();
-      connectViaPairing(url);
+      connectViaPairing(buildOfferUrl(address, code));
     });
 
-    pairInput.addEventListener('keydown', (e) => {
+    pairAddressInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') pairCodeInput.focus();
+    });
+
+    pairCodeInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') pairConnectBtn.click();
     });
 
@@ -586,6 +636,13 @@
         pc = null;
       }
       createPeerConnection();
+
+      // Remember the address regardless of entry point (manual fields or QR
+      // scan) so future manual connects only need the short code retyped.
+      try {
+        const parsed = new URL(offerUrl);
+        localStorage.setItem(STORAGE_SENDER_ADDRESS, parsed.host);
+      } catch (e) {}
 
       try {
         const offerResp = await fetch(offerUrl);

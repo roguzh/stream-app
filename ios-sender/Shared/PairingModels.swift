@@ -13,6 +13,24 @@ struct PairingSession: Codable, Equatable {
     var pairingURLString: String {
         "http://\(ip):\(port)\(AppConstants.signalingPathOffer)?sid=\(sessionId)"
     }
+
+    // For the receiver's two-field manual entry (address + code) — the address
+    // portion is stable enough to remember across sessions; only the code changes.
+    var addressString: String {
+        "\(ip):\(port)"
+    }
+}
+
+// Short, human-typeable codes instead of a 36-character UUID — this is a LAN
+// pairing code, not a security credential (STREAM_PASSWORD-equivalent security
+// doesn't exist for the serverless iOS path at all yet), so a short alphabet is
+// fine. Excludes visually ambiguous characters (0/O, 1/I).
+enum PairingCode {
+    private static let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+
+    static func generate(length: Int = 6) -> String {
+        String((0..<length).map { _ in alphabet.randomElement()! })
+    }
 }
 
 // Wire format for the one-shot GET /offer response and POST /answer request —

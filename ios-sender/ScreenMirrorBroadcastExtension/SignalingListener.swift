@@ -30,7 +30,13 @@ final class SignalingListener {
     }
 
     func start() throws {
-        guard let listener = try? NWListener(using: .tcp, on: .any) else {
+        // Fixed port (not .any) so the receiver can remember the sender's address
+        // across sessions — only the short pairing code needs retyping each time.
+        // Small residual risk of the port being briefly unavailable right after a
+        // previous session closed (TIME_WAIT) — acceptable for personal LAN use;
+        // not worth a fallback-to-random-port retry for this app's scope.
+        let port = NWEndpoint.Port(rawValue: AppConstants.signalingPort) ?? .any
+        guard let listener = try? NWListener(using: .tcp, on: port) else {
             throw ListenerError.couldNotBind
         }
         self.listener = listener

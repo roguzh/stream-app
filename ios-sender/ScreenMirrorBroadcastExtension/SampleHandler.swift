@@ -14,7 +14,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         AppGroupStore.clearDiagnosticLog()
         AppGroupStore.logDiagnostic("broadcastStarted called")
-        let sessionId = UUID().uuidString
+        let sessionId = PairingCode.generate()
 
         sessionManager.setUp { [weak self] result in
             guard let self else { return }

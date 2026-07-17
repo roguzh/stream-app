@@ -9,6 +9,11 @@ enum AppConstants {
     static let bonjourServiceType = "_screenmirror._tcp"
     static let signalingPathOffer = "/offer"
     static let signalingPathAnswer = "/answer"
+    // Fixed instead of ephemeral (.any) — a random port every session meant even
+    // remembering the sender's IP didn't help, the port always changed too. Only
+    // the short pairing code needs to be freshly typed now; the address is stable
+    // enough for the receiver to remember it.
+    static let signalingPort: UInt16 = 8990
 
     // Codec/bitrate constants mirrored from public/sender.html's QUALITY_PRESETS
     // and AUDIO_BITRATE, kept here so both targets reference one source of truth.

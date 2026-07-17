@@ -54,7 +54,7 @@ targets:
         # fresh — confirmed by two separate fixes (button init frame, diagnostic
         # logging) neither taking effect despite successful reinstalls + a device
         # restart. Bump this on every real device test from now on.
-        CURRENT_PROJECT_VERSION: 1784233369
+        CURRENT_PROJECT_VERSION: 1784273289
     dependencies:
       - target: ScreenMirrorBroadcastExtension
         embed: true
@@ -106,7 +106,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: D8QV4PC9XM
         # See ScreenMirrorSender target's matching comment — must bump together.
-        CURRENT_PROJECT_VERSION: 1784233369
+        CURRENT_PROJECT_VERSION: 1784273289
     dependencies:
       - package: StreamWebRTC
 

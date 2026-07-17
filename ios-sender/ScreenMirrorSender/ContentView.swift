@@ -69,12 +69,23 @@ struct ContentView: View {
                 .background(Color.white)
                 .cornerRadius(12)
 
-            Text(session.pairingURLString)
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            // No camera? On the receiver's "Pair with sender" screen, this address
+            // only needs entering once (it's remembered) — the code is the part
+            // that's actually different every time, shown large since that's what
+            // needs reading off this screen and retyping there.
+            VStack(spacing: 4) {
+                Text("No camera? Enter manually:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(session.addressString)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text(session.sessionId)
+                    .font(.system(.title2, design: .monospaced).bold())
+                    .tracking(4)
+                    .textSelection(.enabled)
+            }
 
             // ReplayKit broadcasts can only actually be stopped via the system's red
             // recording indicator or Control Center — this app has no programmatic
