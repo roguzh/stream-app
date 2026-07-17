@@ -485,6 +485,12 @@
       let bytesReceived = 0;
       let framesReceived = 0;
       let framesDecoded = 0;
+      // Which actual IP:port pair got selected for media — if this isn't the LAN
+      // address the sender's signaling used, ICE picked an unstable secondary
+      // interface (e.g. a VPN/hotspot path) that can drop out after initially
+      // connecting, which looks exactly like "connects fine, then dies" rather
+      // than a clean failure.
+      let selectedPairInfo = '–';
       const rtcStats = await pc.getStats();
       rtcStats.forEach(report => {
         if (report.type === 'inbound-rtp' && report.kind === 'video') {
@@ -495,6 +501,13 @@
           if (report.codecId) {
             const codecReport = rtcStats.get(report.codecId);
             if (codecReport) codecName = codecReport.mimeType.replace('video/', '');
+          }
+        }
+        if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
+          const local = report.localCandidateId ? rtcStats.get(report.localCandidateId) : null;
+          const remote = report.remoteCandidateId ? rtcStats.get(report.remoteCandidateId) : null;
+          if (local && remote) {
+            selectedPairInfo = `${local.address || local.ip}:${local.port} <-> ${remote.address || remote.ip}:${remote.port}`;
           }
         }
       });
@@ -509,6 +522,7 @@
         `${codecName}\n` +
         `pkts ${packetsReceived} (${bytesReceived}B)\n` +
         `recv/dec ${framesReceived}/${framesDecoded}\n` +
+        `pair ${selectedPairInfo}\n` +
         `${connectionState}`;
 
       // Feeds the sender's auto quality fallback — dropped frames climbing here means
