@@ -301,7 +301,23 @@
       pc = new RTCPeerConnection({ iceServers: [] });
 
       pc.ontrack = (event) => {
-        video.srcObject = event.streams[0];
+        // event.streams[0] relies on the sender associating its tracks with an
+        // explicit MediaStream (msid) — browser senders (sender.html) do this
+        // implicitly via addTrack(track, stream), but the native iOS sender adds
+        // tracks via addTransceiver() without one, so event.streams can come back
+        // empty. Confirmed on-device: WebRTC's own stats showed frames decoding
+        // successfully (72/72, zero drops) while video.srcObject sat at null the
+        // entire time — decode was fine, nothing was ever attached to display it.
+        // Building the MediaStream from the track directly works regardless of
+        // whether the sender bothered to associate one.
+        if (event.streams && event.streams[0]) {
+          video.srcObject = event.streams[0];
+        } else {
+          if (!(video.srcObject instanceof MediaStream)) {
+            video.srcObject = new MediaStream();
+          }
+          video.srcObject.addTrack(event.track);
+        }
         setStatus('connected');
         // No fullscreen prompt at all — it was a large blocking overlay that
         // fired on every connection regardless of whether the user wanted it.
