@@ -45,7 +45,7 @@ enum AppGroupStore {
     // POSTing straight to the dev Mac's already-running, already-trusted server is
     // far more reliable — its console output is just directly tailable.
     // TEMPORARY — remove once the zero-frames issue is diagnosed.
-    private static let debugLogURL = URL(string: "http://192.168.1.41:3000/debug-log")
+    private static let debugLogURL = URL(string: "http://192.168.1.9:3000/debug-log")
 
     static func logDiagnostic(_ message: String) {
         // File-based logging kept as a secondary path even though retrieval via
