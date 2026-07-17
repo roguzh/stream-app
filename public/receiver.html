@@ -475,12 +475,27 @@
 
       // Dropped frames here mean the device's decoder can't keep up with the incoming
       // stream — a strong signal that this TV, not the sender or network, is the bottleneck.
+      // packetsReceived/framesReceived are the key diagnostic for sender-vs-receiver:
+      // nonzero here with 0 framesDecoded means packets are arriving but decode is
+      // failing (receiver-side problem); staying at 0 means nothing is arriving at
+      // all (sender isn't transmitting, or a network/ICE path issue for media
+      // specifically — which can differ from whatever path signaling used).
       let codecName = '–';
+      let packetsReceived = 0;
+      let bytesReceived = 0;
+      let framesReceived = 0;
+      let framesDecoded = 0;
       const rtcStats = await pc.getStats();
       rtcStats.forEach(report => {
-        if (report.type === 'inbound-rtp' && report.kind === 'video' && report.codecId) {
-          const codecReport = rtcStats.get(report.codecId);
-          if (codecReport) codecName = codecReport.mimeType.replace('video/', '');
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          packetsReceived = report.packetsReceived || 0;
+          bytesReceived = report.bytesReceived || 0;
+          framesReceived = report.framesReceived || 0;
+          framesDecoded = report.framesDecoded || 0;
+          if (report.codecId) {
+            const codecReport = rtcStats.get(report.codecId);
+            if (codecReport) codecName = codecReport.mimeType.replace('video/', '');
+          }
         }
       });
 
@@ -492,6 +507,8 @@
         `dropped ${droppedDelta}/s\n` +
         `buffer ${bufferHealth}s\n` +
         `${codecName}\n` +
+        `pkts ${packetsReceived} (${bytesReceived}B)\n` +
+        `recv/dec ${framesReceived}/${framesDecoded}\n` +
         `${connectionState}`;
 
       // Feeds the sender's auto quality fallback — dropped frames climbing here means
