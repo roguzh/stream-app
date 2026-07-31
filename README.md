@@ -6,7 +6,7 @@ A self-hosted, LAN-only screen-streaming app. Stream your Mac or iPhone's screen
 
 ## Demo
 
-<video src="demo/demo.mp4" controls width="600"></video>
+[Watch the demo video](https://drive.google.com/file/d/12uk0XSUWrjLJ7lOxSAg22p07eLtgtMzZ/view?usp=sharing)
 
 ## About
 
