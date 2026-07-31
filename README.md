@@ -4,6 +4,10 @@ A self-hosted, LAN-only screen-streaming app. Stream your Mac or iPhone's screen
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+## Demo
+
+<video src="demo/demo.mp4" controls width="600"></video>
+
 ## About
 
 Screen-mirroring solutions usually mean AirPlay licensing headaches, Chromecast quirks, or third-party apps phoning home. This is the opposite: a small Node server on your LAN that does nothing but introduce two browsers to each other. Once they're connected, video flows directly peer-to-peer over WebRTC — the server never touches the video stream itself.
