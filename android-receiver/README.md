@@ -1,4 +1,4 @@
-# stream-app — Android TV receiver
+# LSTa — Android TV receiver
 
 A native Android TV client for the Mi Box that replaces opening `receiver.html` in a browser. It talks to the exact same `server.js` signaling server — no server-side changes needed, so the Mac/iPhone sender pages work unchanged.
 
@@ -18,7 +18,7 @@ Download from [developer.android.com/studio](https://developer.android.com/studi
 
 ## 2. Open the project
 
-`File → Open` and select the `android-receiver/` folder (not the whole `stream-app` repo — this subfolder is its own Gradle project). Android Studio will detect it's missing a Gradle wrapper JAR and offer to generate one automatically; accept that. First sync can take a few minutes while it downloads the Android SDK platform, build tools, and the dependencies (`stream-webrtc-android`, `socket.io-client`).
+`File → Open` and select the `android-receiver/` folder (not the whole `lsta` repo — this subfolder is its own Gradle project). Android Studio will detect it's missing a Gradle wrapper JAR and offer to generate one automatically; accept that. First sync can take a few minutes while it downloads the Android SDK platform, build tools, and the dependencies (`stream-webrtc-android`, `socket.io-client`).
 
 If Gradle sync reports a version conflict or missing API, it's almost always Android Studio offering to auto-upgrade something (an AGP/Gradle version bump) — accept those suggestions.
 

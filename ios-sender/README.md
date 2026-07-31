@@ -1,16 +1,17 @@
-# stream-app — iOS sender (serverless, phone-as-host)
+# LSTa — iOS sender (serverless, phone-as-host)
 
 Unlike the rest of this project, this app doesn't connect to `server.js` at all. It's a native iOS app that captures your iPhone's full screen and hosts itself directly on your LAN — no central signaling server required. Start mirroring, scan the QR code it shows on a receiver (currently `public/receiver.html`, via its **Pair with sender** button), and video/audio flow peer-to-peer.
 
-**Compiles clean, but has never run.** This was originally written with zero access to Xcode, and several `RTCAudioDevice`/`RTCRtpTransceiver`/`RTCPeerConnectionFactory` API calls turned out to be wrong on the first real build — wrong method names, wrong types passed to `sorted`, an `isScreencast` property that doesn't exist in this SDK version, and a `setCodecPreferences` overload with a genuinely strange bridged signature. All of that has since been fixed and verified against the actual StreamWebRTC 148.0.0 headers (`xcodebuild ... CODE_SIGNING_ALLOWED=NO` succeeds with zero errors and zero warnings) — see the fix commit for the exact diffs and the reasoning behind each one. What's still unverified is runtime behavior: actual screen capture, actual PCM delivery through `CustomAudioDeviceModule`, actual negotiation with a real receiver. Treat running it on a device as the next real test, not a formality — a clean compile rules out typos and wrong signatures, not wrong runtime assumptions.
+**Status: Work in Progress — runs and streams on a real device, but not yet reliable.** This has been built, installed, and extensively debugged on a physical iPhone: screen capture, H.264 encoding, audio delivery through `CustomAudioDeviceModule`, and real peer-to-peer negotiation with `public/receiver.html` all work correctly while the app stays in the foreground. The known open issue: iOS treats the Broadcast Upload Extension that hosts the WebRTC connection as a low-priority background process, and demotes/kills it roughly 15-50 seconds after you switch to another app, dropping the stream. Automatic reconnection (ICE restart) is already in place and recovers from transient network blips, but can't help once the extension itself has been killed — that requires moving the WebRTC connection out of the extension and into the main app process (which gets a much more generous background-execution budget), and that migration is in progress.
 
 ## What's verified vs. not
 
 | Piece | Status |
 |---|---|
-| Wire protocol (`GET /offer`, `POST /answer`, CORS) | **Verified** — tested end-to-end against a real browser `RTCPeerConnection` using a mock Node server standing in for the iOS listener. `public/receiver.html`'s pairing-mode code is confirmed correct. |
-| Everything inside `ScreenMirrorBroadcastExtension/` and `ScreenMirrorSender/` compiles | **Verified** — `xcodebuild` succeeds with zero errors/warnings against the real StreamWebRTC 148.0.0 API. |
-| Actual runtime behavior (screen capture, audio delivery, real negotiation) | **Not verified.** No run on a physical device yet — that's the next test. |
+| Wire protocol (`GET /offer`, `POST /answer`, CORS) | **Verified** — tested end-to-end against a real browser `RTCPeerConnection`, and against the real iOS app on a physical device. |
+| Compiles and installs | **Verified** — builds clean against the real StreamWebRTC 148.0.0 API and installs/runs on a physical iPhone via `xcrun devicectl`. |
+| Screen capture, H.264 encode, audio delivery, real negotiation | **Verified on-device**, while the app is in the foreground. |
+| Background reliability | **Not yet solved.** The stream reliably drops within ~15-50s of backgrounding the app — see the status note above. A fix is in progress. |
 
 ## 1. Install prerequisites
 
